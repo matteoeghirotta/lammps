@@ -12,13 +12,13 @@
    -------------------------------------------------------------------------*/
 
 /* ----------------------------------------------------------------------
-   Contributing authors: Matteo Ricci
+   Contributing author: Matteo Ricci
    -------------------------------------------------------------------------*/
 
 #include <math.h>
-#include <stdlib.h>
+#include <cstdlib>
 #include <cassert>
-#include <string.h>
+#include <cstring>
 #include "bond_ellipsoid.h"
 #include "atom.h"
 #include "neighbor.h"
@@ -40,12 +40,12 @@ using namespace LAMMPS_NS;
 BondEllipsoid::BondEllipsoid(LAMMPS *lmp) : BondMolc(lmp)
 {
   avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
-  if (!avec) 
+  if (!avec)
     error->all(FLERR,"bond_ellipsoid requires atom style ellipsoid");
 
-  verbose = false; 
+  verbose = false;
   numeric_gradients = false;
-  use_numeric_gradients = false;  
+  use_numeric_gradients = false;
   delta_move = 0.001;
 }
 
@@ -56,7 +56,7 @@ BondEllipsoid::~BondEllipsoid()
   if (allocated) {
     memory->destroy(setflag);
   }
-  
+
   if (verbose) {
     //fclose(hdebug_coo);
     fclose(hdebug_val);
@@ -70,7 +70,7 @@ BondEllipsoid::~BondEllipsoid()
 
 void BondEllipsoid::compute(int eflag, int vflag)
 {
-  typedef std::vector<double> bpv;  
+  typedef std::vector<double> bpv;
   int i1,i2,n,btype;
   double delx,dely,delz,ebond,fbond;
   double delx_angx1,dely_angx1,delz_angx1;
@@ -112,7 +112,7 @@ void BondEllipsoid::compute(int eflag, int vflag)
     btype = bondlist[n][2];
 
     //assert(atom_type[i1] < atom_type[i2]);
-    
+
     iquat = bonus[ellipsoid[i1]].quat;
     double rotMat1[3][3];
     MathExtra::quat_to_mat_trans(iquat, rotMat1);
@@ -144,13 +144,13 @@ void BondEllipsoid::compute(int eflag, int vflag)
     double z2[3] = { rotMat2[2][0],
 		     rotMat2[2][1],
 		     rotMat2[2][2] };
-    
+
     delx = x[i1][0] - x[i2][0];
     dely = x[i1][1] - x[i2][1];
     delz = x[i1][2] - x[i2][2];
-    
+
     rsq = delx*delx + dely*dely + delz*delz;
-    r = sqrt(rsq); 
+    r = sqrt(rsq);
     double rv[] = {-delx/r, -dely/r, -delz/r};
 
     double var[pterms];
@@ -226,30 +226,28 @@ void BondEllipsoid::compute(int eflag, int vflag)
     std::vector<BondPotential*> bps = bondPotSet[btype];
 
     if (verbose) {
-      //fprintf(hdebug_coo, "%li %i ", update->ntimestep, comm->me);
       fprintf(hdebug_val, "%li %i ", update->ntimestep, comm->me);
       fprintf(hdebug_ene, "%li %i ", update->ntimestep, comm->me);
       fprintf(hdebug_gra, "%li %i ", update->ntimestep, comm->me);
       fprintf(hdebug_num, "%li %i ", update->ntimestep, comm->me);
 
-      //fprintf(hdebug_coo, "%i %i ",    tag[i1], tag[i2]);
       fprintf(hdebug_val, "%i %i %i ", btype, tag[i1], tag[i2]);
       fprintf(hdebug_ene, "%i %i %i ", btype, tag[i1], tag[i2]);
       fprintf(hdebug_gra, "%i %i %i ", btype, tag[i1], tag[i2]);
     }
 
     double total_ene = 0.0;
-    
+
     for (unsigned i = 0; i<bps.size(); ++i) {
       BondPotential* bp = bps[i];
-      
+
       std::pair<double, double> p = bp->compute(var[i]);
       total_ene += p.first;
       fbond = -p.second;
       double fbrsq = fbond/rsq;
 
       if (bp->contribute_to_virial()) {
-	if (i == 0) {	  
+	if (i == 0) {
 	  fbond_r = fbond/r;
 	} else if (i == 10) {
 	  double n[3];
@@ -295,21 +293,15 @@ void BondEllipsoid::compute(int eflag, int vflag)
 	  fbond_angz2 = fbrsq;
 	}
       }
-      
+
       if (isnan(fbond)) {
 	printf("bond %s has NAN fbond var: %g index %i, bond atoms %i %i "
 	       "bond type %i\n",
 	       bp->get_name().c_str(), var[i], i, tag[i1], tag[i2], btype);
-
-	// printf("%f %f %f\n", delx, dely, delz);
-	// printf("0: %f %f %f\n", x[i1][0], x[i2][0]);
-	// printf("1: %f %f %f\n", x[i1][1], x[i2][1]);
-	// printf("2: %f %f %f\n", x[i1][2], x[i2][2]);
-
 	fflush(stdout);
 	exit(1);
       }
-      
+
       if (verbose) {
 	switch (i) {
 	case(0):
@@ -361,7 +353,7 @@ void BondEllipsoid::compute(int eflag, int vflag)
 	  fprintf(hdebug_val, "%f ", drz);
 	  break;
 	}
-	
+
 	fprintf(hdebug_ene, "%f ", p.first);
 	fprintf(hdebug_gra, "%f ", -p.second);
       }
@@ -398,7 +390,7 @@ void BondEllipsoid::compute(int eflag, int vflag)
       bpv bpf2 = force2_numeric(btype, i1, i2, delta_move);
       bpv bpt1 = torque1_numeric(btype, i1, i2, delta_move);
       bpv bpt2 = torque2_numeric(btype, i1, i2, delta_move);
-      
+
       if (verbose) {
 	fprintf(hdebug_num, " %g %g %g %g %g %g %g %g %g %g %g %g %g",
 		total_ene,
@@ -443,15 +435,7 @@ void BondEllipsoid::compute(int eflag, int vflag)
       fprintf(hdebug_gra, "\n");
       fprintf(hdebug_num, "\n");
     }
-
-    // fprintf(hdebug_coo, "%f %f %f %f %f %f\n",
-    // 	    x[i1][0], x[i1][1], x[i1][2],
-    // 	    x[i2][0], x[i2][1], x[i2][2]);
-
     if (eflag) ebond = total_ene;
-
-    // if (evflag) ev_tally(i1,i2,nlocal,newton_bond,
-    // 	 		 ebond,total_fbond,delx,dely,delz);
 
     if (evflag) ev_tally_ang(i1,i2,nlocal,newton_bond,
     			     ebond,
@@ -500,10 +484,10 @@ void BondEllipsoid::settings(int narg, char **arg)
 {
   if (narg > 4) error->all(FLERR,"Illegal bond_style command");
 
-  int i = 0;  
+  int i = 0;
   while (i < narg) {
     if (strcmp(arg[i],"verbose") == 0) {
-      verbose = true; 
+      verbose = true;
     } else if (strcmp(arg[i],"numeric_compute") == 0) {
       numeric_gradients = true;
       delta_move = atof(arg[i+1]);
@@ -513,12 +497,11 @@ void BondEllipsoid::settings(int narg, char **arg)
       use_numeric_gradients = true;
       i++;
     } else error->all(FLERR,"Unknown arg in bond style ellipsoid");
-    
+
     i++;
   }
 
-  if (verbose) {    
-    //hdebug_coo = fopen(hfilename("bond_ellipsoid_coo"), "w");
+  if (verbose) {
     hdebug_val = fopen(hfilename("bond_ellipsoid_val"), "w");
     hdebug_ene = fopen(hfilename("bond_ellipsoid_ene"), "w");
     hdebug_gra = fopen(hfilename("bond_ellipsoid_gra"), "w");
@@ -532,7 +515,7 @@ void BondEllipsoid::settings(int narg, char **arg)
 
     fprintf(hdebug_gra, "# ts me type i1 i2  rr xx xy xz yx yy yz zx zy zz "
 	    "xr yr zr rx ry rz\n");
-    
+
     fprintf(hdebug_num, "# ts me ene nfx1 nfy1 nfz1 nfx2 nfy2 nfz2 "
 	    "ntx1 nty1 ntz1 ntx2 nty2 ntz2 \n");
   }
@@ -551,9 +534,7 @@ void BondEllipsoid::coeff(int narg, char **arg)
   force->bounds(FLERR,arg[0],atom->nbondtypes,ilo,ihi);
 
   std::vector<BondPotential*> pset;
-  
-  // std::string bond_id = std::string(arg[1]);
-  //  int argcount = 2;
+
   int argcount = 1;
   for (int i = 0; i < pterms; ++i) {
     if (narg < argcount+1) {
@@ -564,9 +545,7 @@ void BondEllipsoid::coeff(int narg, char **arg)
 
     std::string ptype = std::string(arg[argcount++]);
 
-    //printf("P %s %i/%i\n", ptype.c_str(), i, pterms);
-
-    if (!factory.find(ptype)) { 
+    if (!factory.find(ptype)) {
       printf("cannot find potential type %s for term %i bond coeff %s\n."
 	     "Abort\n",
 	     ptype.c_str(), i, arg[0]);
@@ -576,19 +555,15 @@ void BondEllipsoid::coeff(int narg, char **arg)
     int rank = atoi(arg[argcount++]);
 
     BondPotential* bp = factory.create(ptype, rank, i);
-    
+
     if (narg < argcount + bp->nparams()) {
       printf("unsufficient parameters specified for %s\n.Abort\n",
 	     ptype.c_str());
       exit(1);
     }
-    
+
     for (int j = 0; j < bp->nparams(); ++j) {
-      bp->get_params().push_back(force->numeric(FLERR, arg[argcount++]));     
-      // printf("param %i/%i = %g\n",
-      // 	     j, bp->nparams(),
-      // 	     force->numeric(FLERR, arg[argcount-1]));
-      // fflush(stdout);
+      bp->get_params().push_back(force->numeric(FLERR, arg[argcount++]));
     }
 
     // params are hardcoded in some cases (cheb, herm), so must avoid sigsegv
@@ -603,10 +578,6 @@ void BondEllipsoid::coeff(int narg, char **arg)
   for (int i = ilo; i <= ihi; i++) {
     bondPotSet[i] = pset;
     setflag[i] = 1;
-
-    // printf("BondEllipsoid::coeff bond pset of size %i to bond type %i\n",
-    // 	   bondPotSet[i].size(),
-    // 	   i);
 
     count++;
   }
@@ -668,15 +639,12 @@ double BondEllipsoid::single(int btype,
   double delx,dely,delz,ebond(0.0),fbond(0.0);
   double r, rsq;
   double *iquat,*jquat;
-  
-  // printf("BondEllipsoid::single %i %f (%i %i)\n", btype, sqrt(rsq), i1, i2);
 
   AtomVecEllipsoid::Bonus *bonus = avec->bonus;
 
   double **x = atom->x;
   double **f = atom->f;
   double **tor = atom->torque;
-//  int *atom_type = atom->type;
   int *ellipsoid = atom->ellipsoid;
 
   iquat = bonus[ellipsoid[i1]].quat;
@@ -710,20 +678,15 @@ double BondEllipsoid::single(int btype,
   double z2[3] = { rotMat2[2][0],
 		   rotMat2[2][1],
 		   rotMat2[2][2] };
-    
+
   delx = x[i1][0] - x[i2][0];
   dely = x[i1][1] - x[i2][1];
   delz = x[i1][2] - x[i2][2];
 
-  // delx = x[i2][0] - x[i1][0];
-  // dely = x[i2][1] - x[i1][1];
-  // delz = x[i2][2] - x[i1][2];
-    
   rsq = delx*delx + dely*dely + delz*delz;
-  r = sqrt(rsq); 
+  r = sqrt(rsq);
 
   // force & energy
-
   double rv[] = {-delx/r, -dely/r, -delz/r};
 
   double var[pterms];
@@ -801,23 +764,23 @@ double BondEllipsoid::single(int btype,
   double ene = 0.0;
   for (unsigned i = 0; i<bps.size(); ++i) {
     BondPotential* bp = bps[i];
-      
+
     std::pair<double, double> p = bp->compute(var[i]);
     ene += p.first;
     fbond = -p.second;
     fforce += fbond;
-    
+
     if (isnan(fbond)) {
       printf("bond %s has NAN fbond %g %i\n",
 	     bp->get_name().c_str(), var[i], i);
-	
+
       printf("BondEllipsoid::compute axes1\n %f %f %f\n %f %f %f\n %f %f %f\n",
-	     x1[0], x1[1], x1[2], 
-	     y1[0], y1[1], y1[2], 
+	     x1[0], x1[1], x1[2],
+	     y1[0], y1[1], y1[2],
 	     z1[0], z1[1], z1[2]);
       printf("BondEllipsoid::compute axes2\n %f %f %f\n %f %f %f\n %f %f %f\n",
-	     x2[0], x2[1], x2[2], 
-	     y2[0], y2[1], y2[2], 
+	     x2[0], x2[1], x2[2],
+	     y2[0], y2[1], y2[2],
 	     z2[0], z2[1], z2[2]);
 
       fflush(stdout);
@@ -826,7 +789,7 @@ double BondEllipsoid::single(int btype,
   }
 
   fforce = fbond;
-  
+
   return ene;
 }
 
@@ -836,13 +799,10 @@ BondEllipsoid::force1_numeric(int btype,
 			      double delta_move) {
   double x1save,y1save,z1save;
   double delx,dely,delz,rsq;
-  //AtomVecEllipsoid::Bonus *bonus = avec->bonus;
   double **x = atom->x;
-  //int *atom_type = atom->type;
-  //int *ellipsoid = atom->ellipsoid;
   Bond *bond = force->bond;
   double eng, fbond;
-   
+
   x1save = x[atom1][0];
   y1save = x[atom1][1];
   z1save = x[atom1][2];
@@ -850,7 +810,6 @@ BondEllipsoid::force1_numeric(int btype,
   delx = x[atom2][0] - x[atom1][0];
   dely = x[atom2][1] - x[atom1][1];
   delz = x[atom2][2] - x[atom1][2];
-  //domain->minimum_image(delx,dely,delz);
   rsq = delx*delx + dely*dely + delz*delz;
 
   double ene_comp_trasl_1[3][2] = { { 0.0, 0.0 },
@@ -864,7 +823,7 @@ BondEllipsoid::force1_numeric(int btype,
       x[atom1][0] = x1save + delta*(comp == 0 ? 1.0 : 0);
       x[atom1][1] = y1save + delta*(comp == 1 ? 1.0 : 0);
       x[atom1][2] = z1save + delta*(comp == 2 ? 1.0 : 0);
-	      
+
       if (btype > 0)
 	eng = bond->single(btype,rsq,atom1,atom2,fbond);
       else eng = fbond = 0.0;
@@ -894,15 +853,10 @@ BondEllipsoid::force2_numeric(int btype,
 			      double delta_move) {
   double x2save,y2save,z2save;
   double delx,dely,delz,rsq;
-  //AtomVecEllipsoid::Bonus *bonus = avec->bonus;
   double **x = atom->x;
-  //double **f = atom->f;
-  //double **tor = atom->torque;
-  //int *atom_type = atom->type;
-  //int *ellipsoid = atom->ellipsoid;
   Bond *bond = force->bond;
   double eng, fbond;
-  
+
   x2save = x[atom2][0];
   y2save = x[atom2][1];
   z2save = x[atom2][2];
@@ -910,7 +864,6 @@ BondEllipsoid::force2_numeric(int btype,
   delx = x[atom2][0] - x[atom1][0];
   dely = x[atom2][1] - x[atom1][1];
   delz = x[atom2][2] - x[atom1][2];
-  //domain->minimum_image(delx,dely,delz);
   rsq = delx*delx + dely*dely + delz*delz;
 
   double ene_comp_trasl_2[3][2] = { { 0.0, 0.0 },
@@ -924,7 +877,7 @@ BondEllipsoid::force2_numeric(int btype,
       x[atom2][0] = x2save + delta*(comp == 0 ? 1.0 : 0);
       x[atom2][1] = y2save + delta*(comp == 1 ? 1.0 : 0);
       x[atom2][2] = z2save + delta*(comp == 2 ? 1.0 : 0);
-	      
+
       if (btype > 0)
 	eng = bond->single(btype,rsq,atom1,atom2,fbond);
       else eng = fbond = 0.0;
@@ -952,17 +905,12 @@ std::vector<double>
 BondEllipsoid::torque1_numeric(int btype,
 			       int atom1, int atom2,
 			       double delta_move) {
-  //double delx,dely,delz,rsq;
   AtomVecEllipsoid::Bonus *bonus = avec->bonus;
-  // double **x = atom->x;
-  // double **f = atom->f;
-  // double **tor = atom->torque;
-  //int *atom_type = atom->type;
   int *ellipsoid = atom->ellipsoid;
   Bond *bond = force->bond;
   double eng, fbond;
   double runit[3];
-  
+
   double *quat1 = bonus[ellipsoid[atom1]].quat;
   double q1save[4] = {quat1[0], quat1[1], quat1[2], quat1[3]};
 
@@ -985,7 +933,7 @@ BondEllipsoid::torque1_numeric(int btype,
       MathExtra::qnormalize(quat1);
 
       eng = bond->single(btype,0.0,atom1,atom2,fbond);
-              
+
       if (delta_sign == -1)     ene_comp_rot_1[comp][0] = eng;
       else if (delta_sign == 1)	ene_comp_rot_1[comp][1] = eng;
     }
@@ -1010,17 +958,12 @@ std::vector<double>
 BondEllipsoid::torque2_numeric(int btype,
 			       int atom1, int atom2,
 			       double delta_move) {
-  //double delx,dely,delz,rsq;
   AtomVecEllipsoid::Bonus *bonus = avec->bonus;
-  //double **x = atom->x;
-  //double **f = atom->f;
-  //double **tor = atom->torque;
-  //int *atom_type = atom->type;
   int *ellipsoid = atom->ellipsoid;
   Bond *bond = force->bond;
   double eng, fbond;
   double runit[3];
-  
+
   double *quat2 = bonus[ellipsoid[atom2]].quat;
   double q2save[4] = {quat2[0], quat2[1], quat2[2], quat2[3]};
 
@@ -1043,7 +986,7 @@ BondEllipsoid::torque2_numeric(int btype,
       MathExtra::qnormalize(quat2);
 
       eng = bond->single(btype,0.0,atom1,atom2,fbond);
-              
+
       if (delta_sign == -1)	ene_comp_rot_2[comp][0] = eng;
       else if (delta_sign == 1)	ene_comp_rot_2[comp][1] = eng;
     }
@@ -1053,7 +996,7 @@ BondEllipsoid::torque2_numeric(int btype,
     quat2[2] = q2save[2];
     quat2[3] = q2save[3];
   }
-  
+
   double dspan = 2.0*delta_move;
 
   std::vector<double> t2(3);

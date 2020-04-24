@@ -1,21 +1,18 @@
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+http://lammps.sandia.gov, Sandia National Laboratories
+Steve Plimpton, sjplimp@sandia.gov
 
-   Copyright (2003) Sandia Corporation.  Under the terms of Contract
-   DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under
-   the GNU General Public License.
+Copyright (2003) Sandia Corporation.  Under the terms of Contract
+DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
+certain rights in this software.  This software is distributed under
+the GNU General Public License.
 
-   See the README file in the top-level LAMMPS directory.
+See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing authors: Roy Pollock (LLNL), Paul Crozier (SNL)
-     per-atom energy/virial & group/group energy/force added by Stan Moore (BYU)
-     analytic diff (2 FFT) option added by Rolf Isele-Holder (Aachen University)
-     triclinic added by Stan Moore (SNL) offcenter charges added by Matteo Ricci
+   Contributing author: Matteo Ricci
 ------------------------------------------------------------------------- */
 
 #include <mpi.h>
@@ -67,24 +64,23 @@ enum{FORWARD_IK,FORWARD_AD,FORWARD_IK_PERATOM,FORWARD_AD_PERATOM};
 /* ---------------------------------------------------------------------- */
 
 PPPMOffcentre::PPPMOffcentre(LAMMPS *lmp) :
-  KSpace(lmp), 
-  factors(NULL), density_brick(NULL), vdx_brick(NULL), vdy_brick(NULL), vdz_brick(NULL),
-  u_brick(NULL), v0_brick(NULL), v1_brick(NULL), v2_brick(NULL), v3_brick(NULL),
-  v4_brick(NULL), v5_brick(NULL), greensfn(NULL), vg(NULL), fkx(NULL), fky(NULL),
-  fkz(NULL), density_fft(NULL), work1(NULL), work2(NULL), gf_b(NULL), rho1d(NULL),
-  rho_coeff(NULL), drho1d(NULL), drho_coeff(NULL), sf_precoeff1(NULL), sf_precoeff2(NULL),
-  sf_precoeff3(NULL), sf_precoeff4(NULL), sf_precoeff5(NULL), sf_precoeff6(NULL),
-  acons(NULL), density_A_brick(NULL), density_B_brick(NULL), density_A_fft(NULL),
-  density_B_fft(NULL), fft1(NULL), fft2(NULL), remap(NULL), cg(NULL), cg_peratom(NULL),
-  part2grid(NULL), boxlo(NULL), ncharges(0)
-{
-  peratom_allocate_flag = 0;
-  group_allocate_flag = 0;
+  KSpace(lmp),
+  factors(NULL), density_brick(NULL), vdx_brick(NULL), vdy_brick(NULL),
+  vdz_brick(NULL), u_brick(NULL), v0_brick(NULL), v1_brick(NULL),
+  v2_brick(NULL), v3_brick(NULL), v4_brick(NULL), v5_brick(NULL),
+  greensfn(NULL), vg(NULL), fkx(NULL), fky(NULL), fkz(NULL), density_fft(NULL),
+  work1(NULL), work2(NULL), gf_b(NULL), rho1d(NULL), rho_coeff(NULL),
+  drho1d(NULL), drho_coeff(NULL), sf_precoeff1(NULL), sf_precoeff2(NULL),
+  sf_precoeff3(NULL), sf_precoeff4(NULL), sf_precoeff5(NULL),
+  sf_precoeff6(NULL), acons(NULL), density_A_brick(NULL), density_B_brick(NULL),
+  density_A_fft(NULL), density_B_fft(NULL), fft1(NULL), fft2(NULL), remap(NULL),
+  cg(NULL), cg_peratom(NULL), part2grid(NULL), boxlo(NULL), ncharges(0) {
+    peratom_allocate_flag = 0; group_allocate_flag = 0;
 
   pppmflag = 1;
   group_group_enable = 1;
   triclinic = domain->triclinic;
-  
+
   nfactors = 3;
   factors = new int[nfactors];
   factors[0] = 2;
@@ -208,7 +204,7 @@ void PPPMOffcentre::settings(int narg, char **arg)
       molFrameSite[type][site][0] = force->numeric(FLERR,arg[argcount++]);
       molFrameSite[type][site][1] = force->numeric(FLERR,arg[argcount++]);
       molFrameSite[type][site][2] = force->numeric(FLERR,arg[argcount++]);
-	  
+
       molFrameCharge[type][site] = force->numeric(FLERR,arg[argcount++]);
     }
 
@@ -216,17 +212,16 @@ void PPPMOffcentre::settings(int narg, char **arg)
   }
   // offcentre variant ends
 
-  // check 
   if (narg > argcount) {
     fprintf(stderr, "number of specified charges exceeds the declared %i\n",
-	    nCoulSites);
+            nCoulSites);
     exit(1);
   }
 }
 
 /* ----------------------------------------------------------------------
    free all memory
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 PPPMOffcentre::~PPPMOffcentre()
 {
@@ -242,7 +237,7 @@ PPPMOffcentre::~PPPMOffcentre()
 
 /* ----------------------------------------------------------------------
    called once before run
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::init()
 {
@@ -256,21 +251,23 @@ void PPPMOffcentre::init()
   triclinic_check();
 
   if (triclinic != domain->triclinic)
-    error->all(FLERR,"Must redefine kspace_style after changing to triclinic box");
+    error->all(FLERR,"Must redefine kspace_style after changing to triclinic "
+               "box");
 
   if (domain->triclinic && differentiation_flag == 1)
-    error->all(FLERR,"Cannot (yet) use PPPMOffcentre with triclinic box "
-               "and kspace_modify diff ad");
+    error->all(FLERR,"Cannot (yet) use PPPMOffcentre with triclinic box and "
+               "kspace_modify diff ad");
   if (domain->triclinic && slabflag)
     error->all(FLERR,"Cannot (yet) use PPPMOffcentre with triclinic box and "
                "slab correction");
-  if (domain->dimension == 2) error->all(FLERR,
-                                         "Cannot use PPPMOffcentre with 2d simulation");
+  if (domain->dimension == 2) error->all(FLERR, "Cannot use PPPMOffcentre with"
+                                         "2d simulation");
   if (comm->style != 0)
     error->universe_all(FLERR,"PPPMOffcentre can only currently be used with "
                         "comm_style brick");
 
-  //if (!atom->q_flag) error->all(FLERR,"Kspace style requires atom attribute q");
+  //if (!atom->q_flag) error->all(FLERR,"Kspace style requires atom attribute
+  //q");
 
   if (slabflag == 0 && domain->nonperiodic > 0)
     error->all(FLERR,"Cannot use nonperiodic boundaries with PPPMOffcentre");
@@ -296,7 +293,7 @@ void PPPMOffcentre::init()
   if (p_cutoff == NULL)
     error->all(FLERR,"KSpace style is incompatible with Pair style");
   cutoff = *p_cutoff;
-  
+
   // compute ncharges
   int *type = atom->type;
   int nlocal = atom->nlocal;
@@ -306,50 +303,48 @@ void PPPMOffcentre::init()
 #if defined(_OPENMP)
   // icpc bug: error for nlocal, type
   // solved by adding firstprivate(nlocal, type) to pragma
-#pragma omp parallel for default(none) firstprivate(nlocal, type) reduction(+:ncharges_local)
+#pragma omp parallel for default(none) firstprivate(nlocal, type)\
+  reduction(+:ncharges_local)
 #endif
   for (int i = 0; i < nlocal; i++) {
     int itype = type[i];
     ncharges_local += nsites[itype];
   }
-  
+
   MPI_Allreduce(&ncharges_local,
-		&ncharges,
-		1,
-		MPI_LMP_BIGINT,
-		MPI_SUM,
-		world);
+                &ncharges,
+                1,
+                MPI_LMP_BIGINT,
+                MPI_SUM,
+                world);
 
   // search for max offset due to offcentre charges useful for qdist below
   double max_charge_offset_local = 0.0;
   double scratch = 0.0;
-  
+
   for (int i = 0; i < atom->nlocal; i++) {
     int itype = type[i];
     if (nsites[itype] > 0) {
       for (int s = 1; s <= nsites[itype]; ++s) {
-	scratch = fabs(molFrameSite[itype][s][0]);
-	max_charge_offset_local = scratch > max_charge_offset_local
-	  ? scratch : max_charge_offset_local;
-	scratch = fabs(molFrameSite[itype][s][1]);
-	max_charge_offset_local = scratch > max_charge_offset_local
-	  ? scratch : max_charge_offset_local;
-	scratch = fabs(molFrameSite[itype][s][2]);
-	max_charge_offset_local = scratch > max_charge_offset_local
-	  ? scratch : max_charge_offset_local;
+        scratch = fabs(molFrameSite[itype][s][0]);
+        max_charge_offset_local = scratch > max_charge_offset_local
+          ? scratch : max_charge_offset_local;
+        scratch = fabs(molFrameSite[itype][s][1]);
+        max_charge_offset_local = scratch > max_charge_offset_local
+          ? scratch : max_charge_offset_local;
+        scratch = fabs(molFrameSite[itype][s][2]);
+        max_charge_offset_local = scratch > max_charge_offset_local
+          ? scratch : max_charge_offset_local;
       }
     }
   }
 
   MPI_Allreduce(&max_charge_offset_local,
-		&max_charge_offset,
-		1,
-		MPI_DOUBLE,
-		MPI_MAX,
-		world);
-
-  // printf("PPPM offcentre: %i max_ch_off %f %f\n", comm->me,
-  // 	 max_charge_offset, max_charge_offset_local);
+                &max_charge_offset,
+                1,
+                MPI_DOUBLE,
+                MPI_MAX,
+                world);
 
   // if kspace is TIP4P, extract TIP4P params from pair style
   // bond/angle are not yet init(), so insure equilibrium request is valid
@@ -431,8 +426,8 @@ void PPPMOffcentre::init()
     cgtmp = new GridComm(lmp,world,1,1,
                          nxlo_in,nxhi_in,nylo_in,nyhi_in,nzlo_in,nzhi_in,
                          nxlo_out,nxhi_out,
-			 nylo_out,nyhi_out,
-			 nzlo_out,nzhi_out,
+                         nylo_out,nyhi_out,
+                         nzlo_out,nzhi_out,
                          procneigh[0][0],procneigh[0][1],procneigh[1][0],
                          procneigh[1][1],procneigh[2][0],procneigh[2][1]);
     cgtmp->ghost_notify();
@@ -443,7 +438,8 @@ void PPPMOffcentre::init()
     iteration++;
   }
 
-  if (order < minorder) error->all(FLERR,"PPPMOffcentre order < minimum allowed order");
+  if (order < minorder) error->all(FLERR, "PPPMOffcentre order < minimum "
+                                   "allowed order");
   if (!overlap_allowed && cgtmp->ghost_overlap())
     error->all(FLERR,"PPPMOffcentre grid stencil extends "
                "beyond nearest neighbor processor");
@@ -514,7 +510,7 @@ void PPPMOffcentre::init()
 
 /* ----------------------------------------------------------------------
    adjust PPPMOffcentre coeffs, called initially and whenever volume has changed
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::setup()
 {
@@ -615,7 +611,7 @@ void PPPMOffcentre::setup()
 /* ----------------------------------------------------------------------
    adjust PPPMOffcentre coeffs, called initially and whenever volume has changed
    for a triclinic system
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::setup_triclinic()
 {
@@ -696,7 +692,7 @@ void PPPMOffcentre::setup_triclinic()
 /* ----------------------------------------------------------------------
    reset local grid arrays and communication stencils
    called by fix balance b/c it changed sizes of processor sub-domains
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::setup_grid()
 {
@@ -749,7 +745,8 @@ void PPPMOffcentre::qsum_qsq()
 #if defined(_OPENMP)
   // icpc bug: error for nlocal, type
   // solved by adding firstprivate(nlocal, type) to pragma
-#pragma omp parallel for default(none) firstprivate(nlocal, type) reduction(+:qsum_local,qsqsum_local)
+#pragma omp parallel for default(none) firstprivate(nlocal, type) \
+  reduction(+:qsum_local,qsqsum_local)
 #endif
   for (int i = 0; i < nlocal; i++) {
     int itype = type[i];
@@ -759,7 +756,7 @@ void PPPMOffcentre::qsum_qsq()
       qsqsum_local += qi*qi;
     }
   }
-  
+
   MPI_Allreduce(&qsum_local,&qsum,1,MPI_DOUBLE,MPI_SUM,world);
   MPI_Allreduce(&qsqsum_local,&qsqsum,1,MPI_DOUBLE,MPI_SUM,world);
 
@@ -784,7 +781,7 @@ void PPPMOffcentre::qsum_qsq()
 
 /* ----------------------------------------------------------------------
    compute the PPPMOffcentre long-range force, energy, virial
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute(int eflag, int vflag)
 {
@@ -795,7 +792,7 @@ void PPPMOffcentre::compute(int eflag, int vflag)
 
   if (eflag || vflag) ev_setup(eflag,vflag);
   else evflag = evflag_atom = eflag_global = vflag_global =
-         eflag_atom = vflag_atom = 0;
+    eflag_atom = vflag_atom = 0;
 
   if (evflag_atom && !peratom_allocate_flag) {
     allocate_peratom();
@@ -814,17 +811,17 @@ void PPPMOffcentre::compute(int eflag, int vflag)
 
   if (qsqsum == 0.0) return;
 
-  //MATTEO probably should do something here, convert also offcntre positions 
-// void Domain::x2lamda(int n) -> for offcentre just use void
-// Domain::lamda2x(double *lamda, double *x) ??? not sure maybe shoudl
-// do some transform to orientations too ? otherwise offcentre
-// position computed on the fly based on centres, which are already
-// converted
+  //MATTEO probably should do something here, convert also offcntre positions
+  // void Domain::x2lamda(int n) -> for offcentre just use void
+  // Domain::lamda2x(double *lamda, double *x) ??? not sure maybe shoudl
+  // do some transform to orientations too ? otherwise offcentre
+  // position computed on the fly based on centres, which are already
+  // converted
 
   // how are offcentre charges to be remapped among periodic replicas?
   // by now just out of box
 
-   // convert atoms from box to lamda coords
+  // convert atoms from box to lamda coords
 
   if (triclinic == 0) boxlo = domain->boxlo;
   else {
@@ -918,14 +915,14 @@ void PPPMOffcentre::compute(int eflag, int vflag)
 
     if (eflag_atom) {
       for (i = 0; i < nlocal; i++) {
-	int itype = type[i];
-	double qi_all = 0.0;
-	for (int s = 1; s <= nsites[itype]; ++s) {
-	  double qi = molFrameCharge[itype][s];
-	  qi_all += qi;
-	}
+        int itype = type[i];
+        double qi_all = 0.0;
+        for (int s = 1; s <= nsites[itype]; ++s) {
+          double qi = molFrameCharge[itype][s];
+          qi_all += qi;
+        }
 
-	eatom[i] *= 0.5;
+        eatom[i] *= 0.5;
         eatom[i] -= g_ewald*qi_all*qi_all/MY_PIS + MY_PI2*qi_all*qsum /
           (g_ewald*g_ewald*volume);
         eatom[i] *= qscale;
@@ -945,13 +942,13 @@ void PPPMOffcentre::compute(int eflag, int vflag)
 
   // convert atoms back from lamda to box coords
 
-  //MATTEO probably should do something here, convert also offcntre positions 
+  //MATTEO probably should do something here, convert also offcntre positions
   if (triclinic != 0) domain->lamda2x(atom->nlocal);
 }
 
 /* ----------------------------------------------------------------------
    allocate memory that depends on # of K-vectors and order
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::allocate()
 {
@@ -976,7 +973,7 @@ void PPPMOffcentre::allocate()
 
   if (differentiation_flag == 1) {
     memory->create3d_offset(u_brick,nzlo_out,nzhi_out,nylo_out,nyhi_out,
-                          nxlo_out,nxhi_out,"pppmoffcentre:u_brick");
+                            nxlo_out,nxhi_out,"pppmoffcentre:u_brick");
 
     memory->create(sf_precoeff1,nfft_both,"pppmoffcentre:sf_precoeff1");
     memory->create(sf_precoeff2,nfft_both,"pppmoffcentre:sf_precoeff2");
@@ -1000,7 +997,8 @@ void PPPMOffcentre::allocate()
   if (!stagger_flag) memory->create(gf_b,order,"pppmoffcentre:gf_b");
   memory->create2d_offset(rho1d,3,-order/2,order/2,"pppmoffcentre:rho1d");
   memory->create2d_offset(drho1d,3,-order/2,order/2,"pppmoffcentre:drho1d");
-  memory->create2d_offset(rho_coeff,order,(1-order)/2,order/2,"pppmoffcentre:rho_coeff");
+  memory->create2d_offset(rho_coeff,order,(1-order)/2,order/2,
+                          "pppmoffcentre:rho_coeff");
   memory->create2d_offset(drho_coeff,order,(1-order)/2,order/2,
                           "pppmoffcentre:drho_coeff");
 
@@ -1046,7 +1044,7 @@ void PPPMOffcentre::allocate()
 
 /* ----------------------------------------------------------------------
    deallocate memory that depends on # of K-vectors and order
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::deallocate()
 {
@@ -1097,7 +1095,7 @@ void PPPMOffcentre::deallocate()
 
 /* ----------------------------------------------------------------------
    allocate per-atom memory that depends on # of K-vectors and order
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::allocate_peratom()
 {
@@ -1143,7 +1141,7 @@ void PPPMOffcentre::allocate_peratom()
 
 /* ----------------------------------------------------------------------
    deallocate per-atom memory that depends on # of K-vectors and order
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::deallocate_peratom()
 {
@@ -1165,7 +1163,7 @@ void PPPMOffcentre::deallocate_peratom()
 /* ----------------------------------------------------------------------
    set global size of PPPMOffcentre grid = nx,ny,nz_pppm
    used for charge accumulation, FFTs, and electric field interpolation
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::set_grid_global()
 {
@@ -1179,7 +1177,7 @@ void PPPMOffcentre::set_grid_global()
   double zprd_slab = zprd*slab_volfactor;
 
   // printf("PPPMOffcentre::set_grid_global %f %f %f\n", xprd, yprd, zprd);
-  
+
   // make initial g_ewald estimate
   // based on desired accuracy and real space cutoff
   // fluid-occupied volume used to estimate real-space error
@@ -1304,7 +1302,7 @@ void PPPMOffcentre::set_grid_global()
 
   // printf("PPPMOffcentre::set_grid_global n_ppm %i %i %i\n",
   // 	 nx_pppm, ny_pppm, nz_pppm);
-  
+
   if (triclinic == 0) {
     h_x = xprd/nx_pppm;
     h_y = yprd/ny_pppm;
@@ -1322,7 +1320,7 @@ void PPPMOffcentre::set_grid_global()
 
   // printf("PPPMOffcentre::set_grid_global h %f %f %f\n",
   // 	 h_x, h_y, h_z);
-  
+
   if (nx_pppm >= OFFSET || ny_pppm >= OFFSET || nz_pppm >= OFFSET)
     error->all(FLERR,"PPPMOffcentre grid is too large");
 }
@@ -1330,7 +1328,7 @@ void PPPMOffcentre::set_grid_global()
 /* ----------------------------------------------------------------------
    check if all factors of n are in list of factors
    return 1 if yes, 0 if no
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 int PPPMOffcentre::factorable(int n)
 {
@@ -1351,7 +1349,7 @@ int PPPMOffcentre::factorable(int n)
 
 /* ----------------------------------------------------------------------
    compute estimated kspace force error
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 double PPPMOffcentre::compute_df_kspace()
 {
@@ -1375,7 +1373,7 @@ double PPPMOffcentre::compute_df_kspace()
 
 /* ----------------------------------------------------------------------
    compute qopt
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 double PPPMOffcentre::compute_qopt()
 {
@@ -1460,7 +1458,7 @@ double PPPMOffcentre::compute_qopt()
 
 /* ----------------------------------------------------------------------
    estimate kspace force error for ik method
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 double PPPMOffcentre::estimate_ik_error(double h, double prd, bigint ncharges)
 {
@@ -1476,7 +1474,7 @@ double PPPMOffcentre::estimate_ik_error(double h, double prd, bigint ncharges)
 /* ----------------------------------------------------------------------
    adjust the g_ewald parameter to near its optimal value
    using a Newton-Raphson solver
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::adjust_gewald()
 {
@@ -1495,7 +1493,7 @@ void PPPMOffcentre::adjust_gewald()
 
 /* ----------------------------------------------------------------------
    calculate f(x) using Newton-Raphson solver
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 double PPPMOffcentre::newton_raphson_f()
 {
@@ -1505,8 +1503,8 @@ double PPPMOffcentre::newton_raphson_f()
   //bigint natoms = atom->natoms;
 
   double df_rspace = 2.0*q2*exp(-g_ewald*g_ewald*cutoff*cutoff) /
-       sqrt(ncharges*cutoff*xprd*yprd*zprd);
-//       sqrt(natoms*cutoff*xprd*yprd*zprd);
+    sqrt(ncharges*cutoff*xprd*yprd*zprd);
+  //       sqrt(natoms*cutoff*xprd*yprd*zprd);
 
   double df_kspace = compute_df_kspace();
 
@@ -1516,7 +1514,7 @@ double PPPMOffcentre::newton_raphson_f()
 /* ----------------------------------------------------------------------
    calculate numerical derivative f'(x) using forward difference
    [f(x + h) - f(x)] / h
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 double PPPMOffcentre::derivf()
 {
@@ -1535,7 +1533,7 @@ double PPPMOffcentre::derivf()
 
 /* ----------------------------------------------------------------------
    calculate the final estimate of the accuracy
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 double PPPMOffcentre::final_accuracy()
 {
@@ -1559,7 +1557,7 @@ double PPPMOffcentre::final_accuracy()
    n xyz lo/hi in = 3d brick that I own (inclusive)
    n xyz lo/hi out = 3d brick + ghost cells in 6 directions (inclusive)
    n xyz lo/hi fft = FFT columns that I own (all of x dim, 2d decomp in yz)
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::set_grid_local()
 {
@@ -1580,9 +1578,9 @@ void PPPMOffcentre::set_grid_local()
   nyhi_in = static_cast<int> (comm->ysplit[comm->myloc[1]+1] * ny_pppm) - 1;
 
   nzlo_in = static_cast<int>
-      (comm->zsplit[comm->myloc[2]] * nz_pppm/slab_volfactor);
+    (comm->zsplit[comm->myloc[2]] * nz_pppm/slab_volfactor);
   nzhi_in = static_cast<int>
-      (comm->zsplit[comm->myloc[2]+1] * nz_pppm/slab_volfactor) - 1;
+    (comm->zsplit[comm->myloc[2]+1] * nz_pppm/slab_volfactor) - 1;
 
   // printf("PPPMOffcentre::set_grid_local %i sub\n%i %i\n%i %i\n%i %i\n",
   // 	 comm->me,
@@ -1650,9 +1648,9 @@ void PPPMOffcentre::set_grid_local()
   int nlo,nhi;
 
   nlo = static_cast<int> ((sublo[0]-dist[0]-boxlo[0]) *
-                            nx_pppm/xprd + shift) - OFFSET;
+                          nx_pppm/xprd + shift) - OFFSET;
   nhi = static_cast<int> ((subhi[0]+dist[0]-boxlo[0]) *
-                            nx_pppm/xprd + shift) - OFFSET;
+                          nx_pppm/xprd + shift) - OFFSET;
   nxlo_out = nlo + nlower;
   nxhi_out = nhi + nupper;
 
@@ -1660,11 +1658,11 @@ void PPPMOffcentre::set_grid_local()
   // 	 nxlo_out, nxhi_out,
   // 	 nlo, nhi
   //   );
-  
+
   nlo = static_cast<int> ((sublo[1]-dist[1]-boxlo[1]) *
-                            ny_pppm/yprd + shift) - OFFSET;
+                          ny_pppm/yprd + shift) - OFFSET;
   nhi = static_cast<int> ((subhi[1]+dist[1]-boxlo[1]) *
-                            ny_pppm/yprd + shift) - OFFSET;
+                          ny_pppm/yprd + shift) - OFFSET;
   nylo_out = nlo + nlower;
   nyhi_out = nhi + nupper;
 
@@ -1674,9 +1672,9 @@ void PPPMOffcentre::set_grid_local()
   //   );
 
   nlo = static_cast<int> ((sublo[2]-dist[2]-boxlo[2]) *
-                            nz_pppm/zprd_slab + shift) - OFFSET;
+                          nz_pppm/zprd_slab + shift) - OFFSET;
   nhi = static_cast<int> ((subhi[2]+dist[2]-boxlo[2]) *
-                            nz_pppm/zprd_slab + shift) - OFFSET;
+                          nz_pppm/zprd_slab + shift) - OFFSET;
   nzlo_out = nlo + nlower;
   nzhi_out = nhi + nupper;
 
@@ -1684,7 +1682,7 @@ void PPPMOffcentre::set_grid_local()
   // 	 nzlo_out, nzhi_out,
   // 	 nlo, nhi
   //   );
-  
+
   if (stagger_flag) {
     nxhi_out++;
     nyhi_out++;
@@ -1692,10 +1690,10 @@ void PPPMOffcentre::set_grid_local()
   }
 
   // for slab PPPMOffcentre, change the grid boundary for processors at +z end
-  //   to include the empty volume between periodically repeating slabs
-  // for slab PPPMOffcentre, want charge data communicated from -z proc to +z proc,
-  //   but not vice versa, also want field data communicated from +z proc to
-  //   -z proc, but not vice versa
+  // to include the empty volume between periodically repeating slabs
+  // for slab PPPMOffcentre, want charge data communicated from -z proc to +z
+  // proc, but not vice versa, also want field data communicated from +z proc
+  // to  -z proc, but not vice versa
   // this is accomplished by nzhi_in = nzhi_out on +z end (no ghost cells)
   // also insure no other procs use ghost cells beyond +z limit
 
@@ -1756,7 +1754,7 @@ void PPPMOffcentre::set_grid_local()
 
 /* ----------------------------------------------------------------------
    pre-compute Green's function denominator expansion coeffs, Gamma(2n)
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_gf_denom()
 {
@@ -1779,7 +1777,7 @@ void PPPMOffcentre::compute_gf_denom()
 
 /* ----------------------------------------------------------------------
    pre-compute modified (Hockney-Eastwood) Coulomb Green's function
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_gf_ik()
 {
@@ -1863,7 +1861,7 @@ void PPPMOffcentre::compute_gf_ik()
 /* ----------------------------------------------------------------------
    pre-compute modified (Hockney-Eastwood) Coulomb Green's function
    for a triclinic system
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_gf_ik_triclinic()
 {
@@ -1905,7 +1903,8 @@ void PPPMOffcentre::compute_gf_ik_triclinic()
         unitk_lamda[2] = 2.0*MY_PI*mper;
         x2lamdaT(&unitk_lamda[0],&unitk_lamda[0]);
 
-        sqk = square(unitk_lamda[0]) + square(unitk_lamda[1]) + square(unitk_lamda[2]);
+        sqk = square(unitk_lamda[0]) + square(unitk_lamda[1]) +
+          square(unitk_lamda[2]);
 
         if (sqk != 0.0) {
           numerator = 12.5663706/sqk;
@@ -1939,7 +1938,8 @@ void PPPMOffcentre::compute_gf_ik_triclinic()
                 qz = unitk_lamda[2]+b[2];
                 sz = exp(-0.25*square(qz/g_ewald));
 
-                dot1 = unitk_lamda[0]*qx + unitk_lamda[1]*qy + unitk_lamda[2]*qz;
+                dot1 = unitk_lamda[0]*qx + unitk_lamda[1]*qy +
+                  unitk_lamda[2]*qz;
                 dot2 = qx*qx+qy*qy+qz*qz;
                 sum1 += (dot1/dot2) * sx*sy*sz * wx*wy*wz;
               }
@@ -1954,7 +1954,7 @@ void PPPMOffcentre::compute_gf_ik_triclinic()
 
 /* ----------------------------------------------------------------------
    compute optimized Green's function for energy calculation
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_gf_ad()
 {
@@ -2052,7 +2052,7 @@ void PPPMOffcentre::compute_gf_ad()
 
 /* ----------------------------------------------------------------------
    compute self force coefficients for ad-differentiation scheme
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_sf_precoeff()
 {
@@ -2137,7 +2137,7 @@ void PPPMOffcentre::compute_sf_precoeff()
    find center grid pt for each of my particles
    check that full stencil for the particle will fit in my 3d brick
    store central grid pt indices in part2grid array
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::particle_map()
 {
@@ -2169,27 +2169,27 @@ void PPPMOffcentre::particle_map()
     for (int s = 1; s <= nsites[itype]; ++s) {
       double labFrameSite[3] = {0.0, 0.0, 0.0};
       if (molFrameSite[itype][s][0] != 0.0 ||
-	  molFrameSite[itype][s][1] != 0.0 ||
-	  molFrameSite[itype][s][2] != 0.0) {
-	double ms[3] = {
-	  molFrameSite[itype][s][0],
-	  molFrameSite[itype][s][1],
-	  molFrameSite[itype][s][2]
-	};
+          molFrameSite[itype][s][1] != 0.0 ||
+          molFrameSite[itype][s][2] != 0.0) {
+        double ms[3] = {
+          molFrameSite[itype][s][0],
+          molFrameSite[itype][s][1],
+          molFrameSite[itype][s][2]
+        };
 
-	MathExtra::matvec(rotMat, ms, labFrameSite);
-      }	
+        MathExtra::matvec(rotMat, ms, labFrameSite);
+      }
 
       double rsite[3] = {
-	labFrameSite[0]+x[i][0],
-	labFrameSite[1]+x[i][1],
-	labFrameSite[2]+x[i][2]
+        labFrameSite[0]+x[i][0],
+        labFrameSite[1]+x[i][1],
+        labFrameSite[2]+x[i][2]
       };
 
       // if triclinic all expressed in lamda coords at this point
       if (triclinic != 0)
-      	domain->x2lamda(rsite, rsite);
-      
+        domain->x2lamda(rsite, rsite);
+
       // (nx,ny,nz) = global coords of grid pt to "lower left" of charge
       // current particle coord can be outside global and local box
       // add/subtract OFFSET to avoid int(-0.75) = 0 when want it to be -1
@@ -2201,9 +2201,9 @@ void PPPMOffcentre::particle_map()
       // if (triclinic != 0)
       // 	domain->lamda2x(rsite, rsite);
 
-      // printf("PPPM offcentre %i: particle_map %f %f %f to %i %i %i of %f %f %f\n",
-      // 	     comm->me, rsite[0], rsite[1], rsite[2], nx, ny, nz,
-      // 	     x[i][0], x[i][1], x[i][2]);
+      // printf("PPPM offcentre %i: particle_map %f %f %f to %i %i %i of %f %f
+      // %f\n", comm->me, rsite[0], rsite[1], rsite[2], nx, ny, nz, x[i][0],
+      // x[i][1], x[i][2]);
 
       part2grid[i][s][0] = nx;
       part2grid[i][s][1] = ny;
@@ -2217,29 +2217,29 @@ void PPPMOffcentre::particle_map()
         flag = 1;
         printf("PPPM offcentre (%2i): site at %g %g %g -> %2i %2i %2i\n"
                "PPPM offcentre (%2i): atom %i type %i\n"
-               "PPPM offcentre (%2i): outside bounds x %2i < %2i%s %2i > %2i%s\n"
-               "PPPM offcentre (%2i): outside bounds y %2i < %2i%s %2i > %2i%s\n"
-               "PPPM offcentre (%2i): outside bounds z %2i < %2i%s %2i > %2i%s\n"
+               "PPPM offcentre (%2i): out of bounds x %2i < %2i%s%2i > %2i%s\n"
+               "PPPM offcentre (%2i): out of bounds y %2i < %2i%s%2i > %2i%s\n"
+               "PPPM offcentre (%2i): out of bounds z %2i < %2i%s%2i > %2i%s\n"
                "PPPM offcentre (%2i): with tolerance %i %i\n",
-	       comm->me,
-	       rsite[0], rsite[1], rsite[2], nx, ny, nz,
                comm->me,
-	       tag[i], itype,	       
+               rsite[0], rsite[1], rsite[2], nx, ny, nz,
                comm->me,
-	       nx+nlower, nxlo_out, (nx+nlower < nxlo_out) ? "<--" : "",
+               tag[i], itype,
+               comm->me,
+               nx+nlower, nxlo_out, (nx+nlower < nxlo_out) ? "<--" : "",
                nx+nupper, nxhi_out, (nx+nupper > nxhi_out) ? "<--" : "",
-	       comm->me,
-	       ny+nlower, nylo_out, (ny+nlower < nylo_out) ? "<--" : "",
+               comm->me,
+               ny+nlower, nylo_out, (ny+nlower < nylo_out) ? "<--" : "",
                ny+nupper, nyhi_out, (ny+nupper > nyhi_out) ? "<--" : "",
-	       comm->me,
-	       nz+nlower, nzlo_out, (nz+nlower < nzlo_out) ? "<--" : "",
+               comm->me,
+               nz+nlower, nzlo_out, (nz+nlower < nzlo_out) ? "<--" : "",
                nz+nupper, nzhi_out, (nz+nupper > nzhi_out) ? "<--" : "",
-	       comm->me,
+               comm->me,
                nlower,	nupper);
       }
     }
   }
-  
+
   if (triclinic != 0) domain->x2lamda(atom->nlocal);
 
   if (flag)
@@ -2251,7 +2251,7 @@ void PPPMOffcentre::particle_map()
    density(x,y,z) = charge "density" at grid points of my 3d brick
    (nxlo:nxhi,nylo:nyhi,nzlo:nzhi) is extent of my brick (including ghosts)
    in global grid
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::make_rho()
 {
@@ -2288,27 +2288,27 @@ void PPPMOffcentre::make_rho()
     for (int s = 1; s <= nsites[itype]; ++s) {
       double labFrameSite[3] = {0.0, 0.0, 0.0};
       if (molFrameSite[itype][s][0] != 0.0 ||
-	  molFrameSite[itype][s][1] != 0.0 ||
-	  molFrameSite[itype][s][2] != 0.0) {
-	double ms[3] = {
-	  molFrameSite[itype][s][0],
-	  molFrameSite[itype][s][1],
-	  molFrameSite[itype][s][2]
-	};
+          molFrameSite[itype][s][1] != 0.0 ||
+          molFrameSite[itype][s][2] != 0.0) {
+        double ms[3] = {
+          molFrameSite[itype][s][0],
+          molFrameSite[itype][s][1],
+          molFrameSite[itype][s][2]
+        };
 
-	MathExtra::matvec(rotMat, ms, labFrameSite);
+        MathExtra::matvec(rotMat, ms, labFrameSite);
       }	
 
       double rsite[3] = {
-	labFrameSite[0]+x[i][0],
-	labFrameSite[1]+x[i][1],
-	labFrameSite[2]+x[i][2]
+        labFrameSite[0]+x[i][0],
+        labFrameSite[1]+x[i][1],
+        labFrameSite[2]+x[i][2]
       };
 
       // if triclinic all expressed in lamda coords at this point
       if (triclinic != 0)
-	domain->x2lamda(rsite, rsite);
-      
+        domain->x2lamda(rsite, rsite);
+
       nx = part2grid[i][s][0];
       ny = part2grid[i][s][1];
       nz = part2grid[i][s][2];
@@ -2339,7 +2339,7 @@ void PPPMOffcentre::make_rho()
 
 /* ----------------------------------------------------------------------
    remap density from 3d brick decomposition to FFT decomposition
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::brick2fft()
 {
@@ -2360,7 +2360,7 @@ void PPPMOffcentre::brick2fft()
 
 /* ----------------------------------------------------------------------
    FFT-based Poisson solver
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::poisson()
 {
@@ -2370,7 +2370,7 @@ void PPPMOffcentre::poisson()
 
 /* ----------------------------------------------------------------------
    FFT-based Poisson solver for ik
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::poisson_ik()
 {
@@ -2501,7 +2501,7 @@ void PPPMOffcentre::poisson_ik()
 
 /* ----------------------------------------------------------------------
    FFT-based Poisson solver for ik for a triclinic system
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::poisson_ik_triclinic()
 {
@@ -2571,7 +2571,7 @@ void PPPMOffcentre::poisson_ik_triclinic()
 
 /* ----------------------------------------------------------------------
    FFT-based Poisson solver for ad
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::poisson_ad()
 {
@@ -2645,7 +2645,7 @@ void PPPMOffcentre::poisson_ad()
 
 /* ----------------------------------------------------------------------
    FFT-based Poisson solver for per-atom energy/virial
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::poisson_peratom()
 {
@@ -2781,7 +2781,7 @@ void PPPMOffcentre::poisson_peratom()
 
 /* ----------------------------------------------------------------------
    interpolate from grid to get electric field & force on my particles
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::fieldforce()
 {
@@ -2791,7 +2791,7 @@ void PPPMOffcentre::fieldforce()
 
 /* ----------------------------------------------------------------------
    interpolate from grid to get electric field & force on my particles for ik
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::fieldforce_ik()
 {
@@ -2807,7 +2807,7 @@ void PPPMOffcentre::fieldforce_ik()
 
   double **x = atom->x;
   double **f = atom->f;
-  double **tor = atom->torque;    
+  double **tor = atom->torque;
   int *type = atom->type;
   double *iquat;
   AtomVecEllipsoid::Bonus *bonus = avec->bonus;
@@ -2828,27 +2828,27 @@ void PPPMOffcentre::fieldforce_ik()
     for (int s = 1; s <= nsites[itype]; ++s) {
       double labFrameSite[3] = {0.0, 0.0, 0.0};
       if (molFrameSite[itype][s][0] != 0.0 ||
-	  molFrameSite[itype][s][1] != 0.0 ||
-	  molFrameSite[itype][s][2] != 0.0) {
-	double ms[3] = {
-	  molFrameSite[itype][s][0],
-	  molFrameSite[itype][s][1],
-	  molFrameSite[itype][s][2]
-	};
+          molFrameSite[itype][s][1] != 0.0 ||
+          molFrameSite[itype][s][2] != 0.0) {
+        double ms[3] = {
+          molFrameSite[itype][s][0],
+          molFrameSite[itype][s][1],
+          molFrameSite[itype][s][2]
+        };
 
-	MathExtra::matvec(rotMat, ms, labFrameSite);
-      }	
+        MathExtra::matvec(rotMat, ms, labFrameSite);
+      }
 
       double rsite[3] = {
-	labFrameSite[0]+x[i][0],
-	labFrameSite[1]+x[i][1],
-	labFrameSite[2]+x[i][2]
+        labFrameSite[0]+x[i][0],
+        labFrameSite[1]+x[i][1],
+        labFrameSite[2]+x[i][2]
       };
 
       // if triclinic all expressed in lamda coords at this point
       if (triclinic != 0)
-	domain->x2lamda(rsite, rsite);
-      
+        domain->x2lamda(rsite, rsite);
+
       nx = part2grid[i][s][0];
       ny = part2grid[i][s][1];
       nz = part2grid[i][s][2];
@@ -2860,35 +2860,35 @@ void PPPMOffcentre::fieldforce_ik()
 
       ekx = eky = ekz = ZEROF;
       for (n = nlower; n <= nupper; n++) {
-	mz = n+nz;
-	z0 = rho1d[2][n];
-	for (m = nlower; m <= nupper; m++) {
-	  my = m+ny;
-	  y0 = z0*rho1d[1][m];
-	  for (l = nlower; l <= nupper; l++) {
-	    mx = l+nx;
-	    x0 = y0*rho1d[0][l];
-	    ekx -= x0*vdx_brick[mz][my][mx];
-	    eky -= x0*vdy_brick[mz][my][mx];
-	    ekz -= x0*vdz_brick[mz][my][mx];
-	  }
-	}
+        mz = n+nz;
+        z0 = rho1d[2][n];
+        for (m = nlower; m <= nupper; m++) {
+          my = m+ny;
+          y0 = z0*rho1d[1][m];
+          for (l = nlower; l <= nupper; l++) {
+            mx = l+nx;
+            x0 = y0*rho1d[0][l];
+            ekx -= x0*vdx_brick[mz][my][mx];
+            eky -= x0*vdy_brick[mz][my][mx];
+            ekz -= x0*vdz_brick[mz][my][mx];
+          }
+        }
       }
 
       // convert E-field to force
       const double qfactor = qqrd2e * scale * molFrameCharge[itype][s];
       double force[3] = { qfactor*ekx,
-			  qfactor*eky,
-			  0.0 };
+        qfactor*eky,
+        0.0 };
 
       if (slabflag != 2)
-	force[2] = qfactor*ekz;
+        force[2] = qfactor*ekz;
 
       f[i][0] += force[0];
       f[i][1] += force[1];
 
-      if (slabflag != 2) {        
-	f[i][2] += force[2];
+      if (slabflag != 2) {
+        f[i][2] += force[2];
       }
 
       double torque[3];
@@ -2896,7 +2896,7 @@ void PPPMOffcentre::fieldforce_ik()
       tor[i][0] += torque[0];
       tor[i][1] += torque[1];
       tor[i][2] += torque[2];
-      
+
     }
   }
 
@@ -2905,7 +2905,7 @@ void PPPMOffcentre::fieldforce_ik()
 
 /* ----------------------------------------------------------------------
    interpolate from grid to get electric field & force on my particles for ad
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::fieldforce_ad()
 {
@@ -2933,7 +2933,7 @@ void PPPMOffcentre::fieldforce_ad()
 
   double **x = atom->x;
   double **f = atom->f;
-  double **tor = atom->torque;    
+  double **tor = atom->torque;
   int *type = atom->type;
   double *iquat;
   AtomVecEllipsoid::Bonus *bonus = avec->bonus;
@@ -2942,7 +2942,7 @@ void PPPMOffcentre::fieldforce_ad()
   int nlocal = atom->nlocal;
 
   if (triclinic != 0) domain->lamda2x(atom->nlocal);
-  
+
   for (i = 0; i < nlocal; i++) {
     int itype = type[i];
     double rotMat[3][3];
@@ -2954,26 +2954,26 @@ void PPPMOffcentre::fieldforce_ad()
     for (int s = 1; s <= nsites[itype]; ++s) {
       double labFrameSite[3] = {0.0, 0.0, 0.0};
       if (molFrameSite[itype][s][0] != 0.0 ||
-	  molFrameSite[itype][s][1] != 0.0 ||
-	  molFrameSite[itype][s][2] != 0.0) {
-	double ms[3] = {
-	  molFrameSite[itype][s][0],
-	  molFrameSite[itype][s][1],
-	  molFrameSite[itype][s][2]
-	};
+          molFrameSite[itype][s][1] != 0.0 ||
+          molFrameSite[itype][s][2] != 0.0) {
+        double ms[3] = {
+          molFrameSite[itype][s][0],
+          molFrameSite[itype][s][1],
+          molFrameSite[itype][s][2]
+        };
 
-	MathExtra::matvec(rotMat, ms, labFrameSite);
-      }	
+        MathExtra::matvec(rotMat, ms, labFrameSite);
+      }
 
       double rsite[3] = {
-	labFrameSite[0]+x[i][0],
-	labFrameSite[1]+x[i][1],
-	labFrameSite[2]+x[i][2]
+        labFrameSite[0]+x[i][0],
+        labFrameSite[1]+x[i][1],
+        labFrameSite[2]+x[i][2]
       };
 
       // if triclinic all expressed in lamda coords at this point
       if (triclinic != 0)
-	domain->x2lamda(rsite, rsite);
+        domain->x2lamda(rsite, rsite);
 
       nx = part2grid[i][s][0];
       ny = part2grid[i][s][1];
@@ -2987,16 +2987,16 @@ void PPPMOffcentre::fieldforce_ad()
 
       ekx = eky = ekz = ZEROF;
       for (n = nlower; n <= nupper; n++) {
-	mz = n+nz;
-	for (m = nlower; m <= nupper; m++) {
-	  my = m+ny;
-	  for (l = nlower; l <= nupper; l++) {
-	    mx = l+nx;
-	    ekx += drho1d[0][l]*rho1d[1][m]*rho1d[2][n]*u_brick[mz][my][mx];
-	    eky += rho1d[0][l]*drho1d[1][m]*rho1d[2][n]*u_brick[mz][my][mx];
-	    ekz += rho1d[0][l]*rho1d[1][m]*drho1d[2][n]*u_brick[mz][my][mx];
-	  }
-	}
+        mz = n+nz;
+        for (m = nlower; m <= nupper; m++) {
+          my = m+ny;
+          for (l = nlower; l <= nupper; l++) {
+            mx = l+nx;
+            ekx += drho1d[0][l]*rho1d[1][m]*rho1d[2][n]*u_brick[mz][my][mx];
+            eky += rho1d[0][l]*drho1d[1][m]*rho1d[2][n]*u_brick[mz][my][mx];
+            ekz += rho1d[0][l]*rho1d[1][m]*drho1d[2][n]*u_brick[mz][my][mx];
+          }
+        }
       }
       ekx *= hx_inv;
       eky *= hy_inv;
@@ -3007,7 +3007,7 @@ void PPPMOffcentre::fieldforce_ad()
       const double qfactor = qqrd2e * scale;
       double force[3] = { 0.0, 0.0, 0.0 };
       double torque[3] = { 0.0, 0.0, 0.0 };
-      
+
       s1 = rsite[0]*hx_inv;
       s2 = rsite[1]*hy_inv;
       s3 = rsite[2]*hz_inv;
@@ -3038,12 +3038,12 @@ void PPPMOffcentre::fieldforce_ad()
     }
   }
 
-  if (triclinic != 0) domain->x2lamda(atom->nlocal);  
+  if (triclinic != 0) domain->x2lamda(atom->nlocal);
 }
 
 /* ----------------------------------------------------------------------
    interpolate from grid to get per-atom energy/virial
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::fieldforce_peratom()
 {
@@ -3077,26 +3077,26 @@ void PPPMOffcentre::fieldforce_peratom()
     for (int s = 1; s <= nsites[itype]; ++s) {
       double labFrameSite[3] = {0.0, 0.0, 0.0};
       if (molFrameSite[itype][s][0] != 0.0 ||
-	  molFrameSite[itype][s][1] != 0.0 ||
-	  molFrameSite[itype][s][2] != 0.0) {
-	double ms[3] = {
-	  molFrameSite[itype][s][0],
-	  molFrameSite[itype][s][1],
-	  molFrameSite[itype][s][2]
-	};
+          molFrameSite[itype][s][1] != 0.0 ||
+          molFrameSite[itype][s][2] != 0.0) {
+        double ms[3] = {
+          molFrameSite[itype][s][0],
+          molFrameSite[itype][s][1],
+          molFrameSite[itype][s][2]
+        };
 
-	MathExtra::matvec(rotMat, ms, labFrameSite);
+        MathExtra::matvec(rotMat, ms, labFrameSite);
       }	
 
       double rsite[3] = {
-	labFrameSite[0]+x[i][0],
-	labFrameSite[1]+x[i][1],
-	labFrameSite[2]+x[i][2]
+        labFrameSite[0]+x[i][0],
+        labFrameSite[1]+x[i][1],
+        labFrameSite[2]+x[i][2]
       };
 
       // if triclinic all expressed in lamda coords at this point
       if (triclinic != 0)
-	domain->x2lamda(rsite, rsite);
+        domain->x2lamda(rsite, rsite);
 
       nx = part2grid[i][s][0];
       ny = part2grid[i][s][1];
@@ -3109,25 +3109,25 @@ void PPPMOffcentre::fieldforce_peratom()
 
       u = v0 = v1 = v2 = v3 = v4 = v5 = ZEROF;
       for (n = nlower; n <= nupper; n++) {
-	mz = n+nz;
-	z0 = rho1d[2][n];
-	for (m = nlower; m <= nupper; m++) {
-	  my = m+ny;
-	  y0 = z0*rho1d[1][m];
-	  for (l = nlower; l <= nupper; l++) {
-	    mx = l+nx;
-	    x0 = y0*rho1d[0][l];
-	    if (eflag_atom) u += x0*u_brick[mz][my][mx];
-	    if (vflag_atom) {
-	      v0 += x0*v0_brick[mz][my][mx];
-	      v1 += x0*v1_brick[mz][my][mx];
-	      v2 += x0*v2_brick[mz][my][mx];
-	      v3 += x0*v3_brick[mz][my][mx];
-	      v4 += x0*v4_brick[mz][my][mx];
-	      v5 += x0*v5_brick[mz][my][mx];
-	    }
-	  }
-	}
+        mz = n+nz;
+        z0 = rho1d[2][n];
+        for (m = nlower; m <= nupper; m++) {
+          my = m+ny;
+          y0 = z0*rho1d[1][m];
+          for (l = nlower; l <= nupper; l++) {
+            mx = l+nx;
+            x0 = y0*rho1d[0][l];
+            if (eflag_atom) u += x0*u_brick[mz][my][mx];
+            if (vflag_atom) {
+              v0 += x0*v0_brick[mz][my][mx];
+              v1 += x0*v1_brick[mz][my][mx];
+              v2 += x0*v2_brick[mz][my][mx];
+              v3 += x0*v3_brick[mz][my][mx];
+              v4 += x0*v4_brick[mz][my][mx];
+              v5 += x0*v5_brick[mz][my][mx];
+            }
+          }
+        }
       }
 
       if (eflag_atom) eatom[i] += molFrameCharge[itype][s]*u;
@@ -3147,9 +3147,10 @@ void PPPMOffcentre::fieldforce_peratom()
 
 /* ----------------------------------------------------------------------
    pack own values to buf to send to another proc
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
-void PPPMOffcentre::pack_forward(int flag, FFT_SCALAR *buf, int nlist, int *list)
+void PPPMOffcentre::pack_forward(int flag, FFT_SCALAR *buf, int nlist, int
+                                 *list)
 {
   int n = 0;
 
@@ -3205,9 +3206,10 @@ void PPPMOffcentre::pack_forward(int flag, FFT_SCALAR *buf, int nlist, int *list
 
 /* ----------------------------------------------------------------------
    unpack another proc's own values from buf and set own ghost values
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
-void PPPMOffcentre::unpack_forward(int flag, FFT_SCALAR *buf, int nlist, int *list)
+void PPPMOffcentre::unpack_forward(int flag, FFT_SCALAR *buf, int nlist,
+                                   int *list)
 {
   int n = 0;
 
@@ -3263,9 +3265,10 @@ void PPPMOffcentre::unpack_forward(int flag, FFT_SCALAR *buf, int nlist, int *li
 
 /* ----------------------------------------------------------------------
    pack ghost values into buf to send to another proc
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
-void PPPMOffcentre::pack_reverse(int flag, FFT_SCALAR *buf, int nlist, int *list)
+void PPPMOffcentre::pack_reverse(int flag, FFT_SCALAR *buf, int nlist,
+                                 int *list)
 {
   if (flag == REVERSE_RHO) {
     FFT_SCALAR *src = &density_brick[nzlo_out][nylo_out][nxlo_out];
@@ -3276,9 +3279,10 @@ void PPPMOffcentre::pack_reverse(int flag, FFT_SCALAR *buf, int nlist, int *list
 
 /* ----------------------------------------------------------------------
    unpack another proc's ghost values from buf and add to own values
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
-void PPPMOffcentre::unpack_reverse(int flag, FFT_SCALAR *buf, int nlist, int *list)
+void PPPMOffcentre::unpack_reverse(int flag, FFT_SCALAR *buf, int nlist,
+                                   int *list)
 {
   if (flag == REVERSE_RHO) {
     FFT_SCALAR *dest = &density_brick[nzlo_out][nylo_out][nxlo_out];
@@ -3289,7 +3293,7 @@ void PPPMOffcentre::unpack_reverse(int flag, FFT_SCALAR *buf, int nlist, int *li
 
 /* ----------------------------------------------------------------------
    map nprocs to NX by NY grid as PX by PY procs - return optimal px,py
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::procs2grid2d(int nprocs, int nx, int ny, int *px, int *py)
 {
@@ -3328,10 +3332,10 @@ void PPPMOffcentre::procs2grid2d(int nprocs, int nx, int ny, int *px, int *py)
 /* ----------------------------------------------------------------------
    charge assignment into rho1d
    dx,dy,dz = distance of particle from "lower left" grid point
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_rho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
-                         const FFT_SCALAR &dz)
+                                  const FFT_SCALAR &dz)
 {
   int k,l;
   FFT_SCALAR r1,r2,r3;
@@ -3353,10 +3357,10 @@ void PPPMOffcentre::compute_rho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
 /* ----------------------------------------------------------------------
    charge assignment into drho1d
    dx,dy,dz = distance of particle from "lower left" grid point
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_drho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
-                          const FFT_SCALAR &dz)
+                                   const FFT_SCALAR &dz)
 {
   int k,l;
   FFT_SCALAR r1,r2,r3;
@@ -3378,21 +3382,21 @@ void PPPMOffcentre::compute_drho1d(const FFT_SCALAR &dx, const FFT_SCALAR &dy,
 /* ----------------------------------------------------------------------
    generate coeffients for the weight function of order n
 
-              (n-1)
-  Wn(x) =     Sum    wn(k,x) , Sum is over every other integer
-           k=-(n-1)
-  For k=-(n-1),-(n-1)+2, ....., (n-1)-2,n-1
-      k is odd integers if n is even and even integers if n is odd
-              ---
-             | n-1
-             | Sum a(l,j)*(x-k/2)**l   if abs(x-k/2) < 1/2
-  wn(k,x) = <  l=0
-             |
-             |  0                       otherwise
-              ---
-  a coeffients are packed into the array rho_coeff to eliminate zeros
-  rho_coeff(l,((k+mod(n+1,2))/2) = a(l,k)
-------------------------------------------------------------------------- */
+   (n-1)
+   Wn(x) =     Sum    wn(k,x) , Sum is over every other integer
+   k=-(n-1)
+   For k=-(n-1),-(n-1)+2, ....., (n-1)-2,n-1
+   k is odd integers if n is even and even integers if n is odd
+   ---
+   | n-1
+   | Sum a(l,j)*(x-k/2)**l   if abs(x-k/2) < 1/2
+   wn(k,x) = <  l=0
+   |
+   |  0                       otherwise
+   ---
+   a coeffients are packed into the array rho_coeff to eliminate zeros
+   rho_coeff(l,((k+mod(n+1,2))/2) = a(l,k)
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_rho_coeff()
 {
@@ -3442,7 +3446,7 @@ void PPPMOffcentre::compute_rho_coeff()
    adequate empty space is left between repeating slabs (J. Chem. Phys.
    111, 3155).  Slabs defined here to be parallel to the xy plane. Also
    extended to non-neutral systems (J. Chem. Phys. 131, 094107).
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::slabcorr()
 {
@@ -3455,7 +3459,7 @@ void PPPMOffcentre::slabcorr()
   int *ellipsoid = atom->ellipsoid;
   double zprd = domain->zprd;
   int nlocal = atom->nlocal;
-  double **tor = atom->torque;    
+  double **tor = atom->torque;
 
   double dipole = 0.0;
   for (int i = 0; i < nlocal; i++) {
@@ -3469,21 +3473,21 @@ void PPPMOffcentre::slabcorr()
     for (int s = 1; s <= nsites[itype]; ++s) {
       double labFrameSite[3] = {0.0, 0.0, 0.0};
       if (molFrameSite[itype][s][0] != 0.0 ||
-	  molFrameSite[itype][s][1] != 0.0 ||
-	  molFrameSite[itype][s][2] != 0.0) {
-	double ms[3] = {
-	  molFrameSite[itype][s][0],
-	  molFrameSite[itype][s][1],
-	  molFrameSite[itype][s][2]
-	};
+          molFrameSite[itype][s][1] != 0.0 ||
+          molFrameSite[itype][s][2] != 0.0) {
+        double ms[3] = {
+          molFrameSite[itype][s][0],
+          molFrameSite[itype][s][1],
+          molFrameSite[itype][s][2]
+        };
 
-	MathExtra::matvec(rotMat, ms, labFrameSite);
-      }	
+        MathExtra::matvec(rotMat, ms, labFrameSite);
+      }
 
       double rsite[3] = {
-	labFrameSite[0]+x[i][0],
-	labFrameSite[1]+x[i][1],
-	labFrameSite[2]+x[i][2]
+        labFrameSite[0]+x[i][0],
+        labFrameSite[1]+x[i][1],
+        labFrameSite[2]+x[i][2]
       };
 
       //
@@ -3505,31 +3509,31 @@ void PPPMOffcentre::slabcorr()
       int itype = type[i];
       double rotMat[3][3];
       if (nsites[itype] > 0) {
-	iquat = bonus[ellipsoid[i]].quat;
-	MathExtra::quat_to_mat(iquat, rotMat);
+        iquat = bonus[ellipsoid[i]].quat;
+        MathExtra::quat_to_mat(iquat, rotMat);
       }
 
       for (int s = 1; s <= nsites[itype]; ++s) {
-	double labFrameSite[3] = {0.0, 0.0, 0.0};
-	if (molFrameSite[itype][s][0] != 0.0 ||
-	    molFrameSite[itype][s][1] != 0.0 ||
-	    molFrameSite[itype][s][2] != 0.0) {
-	  double ms[3] = {
-	    molFrameSite[itype][s][0],
-	    molFrameSite[itype][s][1],
-	    molFrameSite[itype][s][2]
-	  };
+        double labFrameSite[3] = {0.0, 0.0, 0.0};
+        if (molFrameSite[itype][s][0] != 0.0 ||
+            molFrameSite[itype][s][1] != 0.0 ||
+            molFrameSite[itype][s][2] != 0.0) {
+          double ms[3] = {
+            molFrameSite[itype][s][0],
+            molFrameSite[itype][s][1],
+            molFrameSite[itype][s][2]
+          };
 
-	  MathExtra::matvec(rotMat, ms, labFrameSite);
-	}	
+          MathExtra::matvec(rotMat, ms, labFrameSite);
+        }
 
-	double rsite[3] = {
-	  labFrameSite[0]+x[i][0],
-	  labFrameSite[1]+x[i][1],
-	  labFrameSite[2]+x[i][2]
-	};
+        double rsite[3] = {
+          labFrameSite[0]+x[i][0],
+          labFrameSite[1]+x[i][1],
+          labFrameSite[2]+x[i][2]
+        };
 
-	dipole += molFrameCharge[itype][s]*rsite[2]*rsite[2];
+        dipole += molFrameCharge[itype][s]*rsite[2]*rsite[2];
       }
 
       // sum local contributions
@@ -3539,58 +3543,56 @@ void PPPMOffcentre::slabcorr()
       dipole_r2 = tmp;
     }
 
-  // compute corrections
+    // compute corrections
 
-  const double e_slabcorr = MY_2PI*(dipole_all*dipole_all -
-    qsum*dipole_r2 - qsum*qsum*zprd*zprd/12.0)/volume;
-  const double qscale = qqrd2e * scale;
+    const double e_slabcorr = MY_2PI*(dipole_all*dipole_all - qsum*dipole_r2 -
+                                      qsum*qsum*zprd*zprd/12.0)/volume;
+    const double qscale = qqrd2e * scale;
 
-  if (eflag_global) energy += qscale * e_slabcorr;
+    if (eflag_global) energy += qscale * e_slabcorr;
 
-  // per-atom energy
+    // per-atom energy
 
-  if (eflag_atom) {
-    double efact = qscale * MY_2PI/volume;
-    for (int i = 0; i < nlocal; i++) {
-      int itype = type[i];
-      double rotMat[3][3];
-      if (nsites[itype] > 0) {
-	iquat = bonus[ellipsoid[i]].quat;
-	MathExtra::quat_to_mat(iquat, rotMat);
-      }
+    if (eflag_atom) {
+      double efact = qscale * MY_2PI/volume;
+      for (int i = 0; i < nlocal; i++) {
+        int itype = type[i];
+        double rotMat[3][3];
+        if (nsites[itype] > 0) {
+          iquat = bonus[ellipsoid[i]].quat;
+          MathExtra::quat_to_mat(iquat, rotMat);
+        }
 
-      for (int s = 1; s <= nsites[itype]; ++s) {
-	double labFrameSite[3] = {0.0, 0.0, 0.0};
-	if (molFrameSite[itype][s][0] != 0.0 ||
-	    molFrameSite[itype][s][1] != 0.0 ||
-	    molFrameSite[itype][s][2] != 0.0) {
-	  double ms[3] = {
-	    molFrameSite[itype][s][0],
-	    molFrameSite[itype][s][1],
-	    molFrameSite[itype][s][2]
-	  };
+        for (int s = 1; s <= nsites[itype]; ++s) {
+          double labFrameSite[3] = {0.0, 0.0, 0.0};
+          if (molFrameSite[itype][s][0] != 0.0 ||
+              molFrameSite[itype][s][1] != 0.0 ||
+              molFrameSite[itype][s][2] != 0.0) {
+            double ms[3] = {
+              molFrameSite[itype][s][0],
+              molFrameSite[itype][s][1],
+              molFrameSite[itype][s][2]
+            };
 
-	  MathExtra::matvec(rotMat, ms, labFrameSite);
-	}	
+            MathExtra::matvec(rotMat, ms, labFrameSite);
+          }
 
-	double rsite[3] = {
-	  labFrameSite[0]+x[i][0],
-	  labFrameSite[1]+x[i][1],
-	  labFrameSite[2]+x[i][2]
-	};
+          double rsite[3] = {
+            labFrameSite[0]+x[i][0],
+            labFrameSite[1]+x[i][1],
+            labFrameSite[2]+x[i][2]
+          };
 
-	eatom[i] +=
-	  efact * molFrameCharge[itype][s]*(rsite[2]*dipole_all
-					    - 0.5*(dipole_r2 +
-						   qsum*rsite[2]*rsite[2]) - qsum*zprd*zprd/12.0);
-      }
-    }
-  }
+          eatom[i] +=
+            efact * molFrameCharge[itype][s]*(rsite[2]*dipole_all -
+                                              0.5*(dipole_r2 +
+                                                   qsum*rsite[2]*rsite[2]) -
+                                              qsum*zprd*zprd/12.0); } } }
 
-  // add on force corrections
+    // add on force corrections
 
-  double ffact = qscale * (-4.0*MY_PI/volume);
-  double **f = atom->f;
+    double ffact = qscale * (-4.0*MY_PI/volume);
+    double **f = atom->f;
 
     for (int i = 0; i < nlocal; i++) {
       int itype = type[i];
@@ -3612,7 +3614,7 @@ void PPPMOffcentre::slabcorr()
           };
 
           MathExtra::matvec(rotMat, ms, labFrameSite);
-        }	
+        }
 
         double rsite[3] = {
           labFrameSite[0]+x[i][0],
@@ -3621,7 +3623,8 @@ void PPPMOffcentre::slabcorr()
         };
 
         double force[3] = {0.0, 0.0, 0.0};
-        force[2] = ffact * molFrameCharge[itype][s]*(dipole_all - qsum*rsite[2]);
+        force[2] = ffact * molFrameCharge[itype][s]*(dipole_all -
+                                                     qsum*rsite[2]);
         f[i][2] += force[2];
 
         // and torque?
@@ -3638,7 +3641,7 @@ void PPPMOffcentre::slabcorr()
 
 /* ----------------------------------------------------------------------
    perform and time the 1d FFTs required for N timesteps
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 int PPPMOffcentre::timing_1d(int n, double &time1d)
 {
@@ -3668,7 +3671,7 @@ int PPPMOffcentre::timing_1d(int n, double &time1d)
 
 /* ----------------------------------------------------------------------
    perform and time the 3d FFTs required for N timesteps
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 int PPPMOffcentre::timing_3d(int n, double &time3d)
 {
@@ -3698,7 +3701,7 @@ int PPPMOffcentre::timing_3d(int n, double &time3d)
 
 /* ----------------------------------------------------------------------
    memory usage of local arrays
-------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 double PPPMOffcentre::memory_usage()
 {
@@ -3730,15 +3733,16 @@ double PPPMOffcentre::memory_usage()
 
 /* ----------------------------------------------------------------------
    group-group interactions
- ------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   compute the PPPMOffcentre total long-range force and energy for groups A and B
- ------------------------------------------------------------------------- */
+   compute the PPPMOffcentre total long-range force and energy for groups A and
+   B
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::compute_group_group(int groupbit_A,
-					int groupbit_B,
-					int AA_flag)
+                                        int groupbit_B,
+                                        int AA_flag)
 {
   if (slabflag && triclinic)
     error->all(FLERR,"Cannot (yet) use K-space slab "
@@ -3837,8 +3841,8 @@ void PPPMOffcentre::compute_group_group(int groupbit_A,
 }
 
 /* ----------------------------------------------------------------------
- allocate group-group memory that depends on # of K-vectors and order
- ------------------------------------------------------------------------- */
+   allocate group-group memory that depends on # of K-vectors and order
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::allocate_groups()
 {
@@ -3874,8 +3878,8 @@ void PPPMOffcentre::deallocate_groups()
    ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::make_rho_groups(int groupbit_A,
-				    int groupbit_B,
-				    int AA_flag)
+                                    int groupbit_B,
+                                    int AA_flag)
 {
   int l,m,n,nx,ny,nz,mx,my,mz;
   FFT_SCALAR dx,dy,dz,x0,y0,z0;
@@ -3902,7 +3906,7 @@ void PPPMOffcentre::make_rho_groups(int groupbit_A,
   int *mask = atom->mask;
 
   if (triclinic != 0) domain->lamda2x(atom->nlocal);
-  
+
   for (int i = 0; i < nlocal; i++) {
 
     if (!((mask[i] & groupbit_A) && (mask[i] & groupbit_B)))
@@ -3912,33 +3916,33 @@ void PPPMOffcentre::make_rho_groups(int groupbit_A,
       int itype = type[i];
       double rotMat[3][3];
       if (nsites[itype] > 0) {
-	iquat = bonus[ellipsoid[i]].quat;
-	MathExtra::quat_to_mat(iquat, rotMat);
+        iquat = bonus[ellipsoid[i]].quat;
+        MathExtra::quat_to_mat(iquat, rotMat);
       }
 
       for (int s = 1; s <= nsites[itype]; ++s) {
-	double labFrameSite[3] = {0.0, 0.0, 0.0};
-	if (molFrameSite[itype][s][0] != 0.0 ||
-	    molFrameSite[itype][s][1] != 0.0 ||
-	    molFrameSite[itype][s][2] != 0.0) {
-	  double ms[3] = {
-	    molFrameSite[itype][s][0],
-	    molFrameSite[itype][s][1],
-	    molFrameSite[itype][s][2]
-	  };
+        double labFrameSite[3] = {0.0, 0.0, 0.0};
+        if (molFrameSite[itype][s][0] != 0.0 ||
+            molFrameSite[itype][s][1] != 0.0 ||
+            molFrameSite[itype][s][2] != 0.0) {
+          double ms[3] = {
+            molFrameSite[itype][s][0],
+            molFrameSite[itype][s][1],
+            molFrameSite[itype][s][2]
+          };
 
-	  MathExtra::matvec(rotMat, ms, labFrameSite);
-	}	
+          MathExtra::matvec(rotMat, ms, labFrameSite);
+        }
 
-	double rsite[3] = {
-	  labFrameSite[0]+x[i][0],
-	  labFrameSite[1]+x[i][1],
-	  labFrameSite[2]+x[i][2]
-	};
+        double rsite[3] = {
+          labFrameSite[0]+x[i][0],
+          labFrameSite[1]+x[i][1],
+          labFrameSite[2]+x[i][2]
+        };
 
-	// if triclinic all expressed in lamda coords at this point
-	if (triclinic != 0)
-	  domain->x2lamda(rsite, rsite);
+        // if triclinic all expressed in lamda coords at this point
+        if (triclinic != 0)
+          domain->x2lamda(rsite, rsite);
 
         nx = part2grid[i][s][0];
         ny = part2grid[i][s][1];
@@ -3947,30 +3951,30 @@ void PPPMOffcentre::make_rho_groups(int groupbit_A,
         dy = ny+shiftone - (rsite[1]-boxlo[1])*delyinv;
         dz = nz+shiftone - (rsite[2]-boxlo[2])*delzinv;
 
-	compute_rho1d(dx,dy,dz);
+        compute_rho1d(dx,dy,dz);
 
         z0 = delvolinv * molFrameCharge[itype][s];
-	for (n = nlower; n <= nupper; n++) {
-	  mz = n+nz;
-	  y0 = z0*rho1d[2][n];
-	  for (m = nlower; m <= nupper; m++) {
-	    my = m+ny;
-	    x0 = y0*rho1d[1][m];
-	    for (l = nlower; l <= nupper; l++) {
-	      mx = l+nx;
+        for (n = nlower; n <= nupper; n++) {
+          mz = n+nz;
+          y0 = z0*rho1d[2][n];
+          for (m = nlower; m <= nupper; m++) {
+            my = m+ny;
+            x0 = y0*rho1d[1][m];
+            for (l = nlower; l <= nupper; l++) {
+              mx = l+nx;
 
-	      // group A
+              // group A
 
-	      if (mask[i] & groupbit_A)
-		density_A_brick[mz][my][mx] += x0*rho1d[0][l];
+              if (mask[i] & groupbit_A)
+                density_A_brick[mz][my][mx] += x0*rho1d[0][l];
 
-	      // group B
+              // group B
 
-	      if (mask[i] & groupbit_B)
-		density_B_brick[mz][my][mx] += x0*rho1d[0][l];
-	    }
-	  }
-	}
+              if (mask[i] & groupbit_B)
+                density_B_brick[mz][my][mx] += x0*rho1d[0][l];
+            }
+          }
+        }
       }
     }
   }
@@ -3980,7 +3984,7 @@ void PPPMOffcentre::make_rho_groups(int groupbit_A,
 
 /* ----------------------------------------------------------------------
    FFT-based Poisson solver for group-group interactions
- ------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::poisson_groups(int AA_flag)
 {
@@ -4087,7 +4091,7 @@ void PPPMOffcentre::poisson_groups(int AA_flag)
 /* ----------------------------------------------------------------------
    FFT-based Poisson solver for group-group interactions
    for a triclinic system
- ------------------------------------------------------------------------- */
+   ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::poisson_groups_triclinic()
 {
@@ -4137,8 +4141,8 @@ void PPPMOffcentre::poisson_groups_triclinic()
    ------------------------------------------------------------------------- */
 
 void PPPMOffcentre::slabcorr_groups(int groupbit_A,
-				    int groupbit_B,
-				    int AA_flag)
+                                    int groupbit_B,
+                                    int AA_flag)
 {
   // compute local contribution to global dipole moment
 
@@ -4183,7 +4187,7 @@ void PPPMOffcentre::slabcorr_groups(int groupbit_A,
           };
 
           MathExtra::matvec(rotMat, ms, labFrameSite);
-        }	
+        }
 
         double rsite[3] = {
           labFrameSite[0]+x[i][0],
@@ -4203,7 +4207,7 @@ void PPPMOffcentre::slabcorr_groups(int groupbit_A,
       }
     }
   }
-  
+
   // sum local contributions to get total charge and global dipole moment
   //  for each group
 
@@ -4232,8 +4236,8 @@ void PPPMOffcentre::slabcorr_groups(int groupbit_A,
   const double efact = qscale * MY_2PI/volume;
 
   e2group += efact * (dipole_A*dipole_B - 0.5*(qsum_A*dipole_r2_B +
-					       qsum_B*dipole_r2_A)
-		      - qsum_A*qsum_B*zprd*zprd/12.0);
+                                               qsum_B*dipole_r2_A)
+                      - qsum_A*qsum_B*zprd*zprd/12.0);
 
   // add on force corrections
 

@@ -5,15 +5,15 @@
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
-   certain rights in this software.  This software is distributed under 
+   certain rights in this software.  This software is distributed under
    the GNU General Public License.
 
    See the README file in the top-level LAMMPS directory.
    -------------------------------------------------------------------------*/
 
-/* ----------------------------------------------------------------------
-   Contributing author: Matteo Ricci (...)
-   -------------------------------------------------------------------------*/
+/* -------------------------------------------------------------------------
+   Contributing author: Matteo Ricci
+----------------------------------------------------------------------------*/
 
 #include "update.h"
 #include "math.h"
@@ -31,13 +31,12 @@
 #include "memory.h"
 #include "error.h"
 #include "domain.h"
-#include <iostream>
 
 using namespace LAMMPS_NS;
 
 /* ---------------------------------------------------------------------- */
 
-PairCoulCutOffcentre::PairCoulCutOffcentre(LAMMPS *lmp) : Pair(lmp) 
+PairCoulCutOffcentre::PairCoulCutOffcentre(LAMMPS *lmp) : Pair(lmp)
 {
   avec = (AtomVecEllipsoid *) atom->style_match("ellipsoid");
   if (!avec)
@@ -93,63 +92,7 @@ void PairCoulCutOffcentre::compute(int eflag, int vflag)
   numneigh = list->numneigh;
   firstneigh = list->firstneigh;
 
-// debug!!!!!!!!!!!!!!!!!!!!
-  // for (ii = 0; ii < nlocal; ii++) {
-  //   i = ilist[ii];
-  //   itype = type[i];
-
-  //   // rotate site1 in lab frame
-  //   double rotMat1[3][3];
-  //   if (nsites[itype] > 0) {
-  //     iquat = bonus[ellipsoid[i]].quat;
-  //     MathExtra::quat_to_mat(iquat, rotMat1);
-  //   }
-    
-  //   //std::cout << "[PairCoulCutOffcentre] SITES " << nsites[itype] << " " << nsites[jtype] << " " << itype << " " << jtype << std::endl;  
-
-  //   for (int s1 = 1; s1 <= nsites[itype]; ++s1) {
-  //       q1 = molFrameCharge[itype][s1];
-	  
-  //       double labFrameSite1[3] = {0.0, 0.0, 0.0};
-  //       //double labframeNormalized1[3] = {0.0, 0.0, 0.0};
-  //       if (molFrameSite[itype][s1][0] != 0.0 ||
-  //           molFrameSite[itype][s1][1] != 0.0 ||
-  //           molFrameSite[itype][s1][2] != 0.0)
-  //         {
-  //           double ms1[3] = {
-  //             molFrameSite[itype][s1][0],
-  //             molFrameSite[itype][s1][1],
-  //             molFrameSite[itype][s1][2]
-  //           };
-
-  //           MathExtra::matvec(rotMat1, ms1, labFrameSite1);
-  //           // double labFrameSite1norm =
-  //           //   sqrt(labFrameSite1[0]*labFrameSite1[0]+
-  //           // 	   labFrameSite1[1]*labFrameSite1[1]+
-  //           // 	   labFrameSite1[2]*labFrameSite1[2]);
-
-  //           // labframeNormalized1[0] = labFrameSite1[0]/labFrameSite1norm;
-  //           // labframeNormalized1[1] = labFrameSite1[1]/labFrameSite1norm;
-  //           // labframeNormalized1[2] = labFrameSite1[2]/labFrameSite1norm;
-  //         }	
-
-  //       double rsite1[3] = {
-  //         labFrameSite1[0]+x[i][0],
-  //         labFrameSite1[1]+x[i][1],
-  //         labFrameSite1[2]+x[i][2]
-  //       };        
-
-  //   std::cout << "[PairCoulCutOffcentre]DEBUG "
-  // 	      << update->ntimestep << " " << itype << " " << s1 << " " 
-  // 	      << rsite1[0] << " " << rsite1[1] << " " << rsite1[2] << " "
-  // 	      << q1
-  // 	      << std::endl;
-  //   }
-  // }
-// debug!!!!!!!!!!!!!!!!!!!!
-  
   // loop over neighbors of my atoms
-
   for (ii = 0; ii < inum; ii++) {
     i = ilist[ii];
     itype = type[i];
@@ -162,14 +105,11 @@ void PairCoulCutOffcentre::compute(int eflag, int vflag)
       iquat = bonus[ellipsoid[i]].quat;
       MathExtra::quat_to_mat(iquat, rotMat1);
     }
-    
-    //std::cout << "[PairCoulCutOffcentre] SITES " << nsites[itype] << " " << nsites[jtype] << " " << itype << " " << jtype << std::endl;  
 
     for (int s1 = 1; s1 <= nsites[itype]; ++s1) {
       q1 = molFrameCharge[itype][s1];
-	  
+
       double labFrameSite1[3] = {0.0, 0.0, 0.0};
-      //double labframeNormalized1[3] = {0.0, 0.0, 0.0};
       if (molFrameSite[itype][s1][0] != 0.0 ||
 	  molFrameSite[itype][s1][1] != 0.0 ||
 	  molFrameSite[itype][s1][2] != 0.0)
@@ -181,15 +121,7 @@ void PairCoulCutOffcentre::compute(int eflag, int vflag)
 	  };
 
 	  MathExtra::matvec(rotMat1, ms1, labFrameSite1);
-	  // double labFrameSite1norm =
-	  //   sqrt(labFrameSite1[0]*labFrameSite1[0]+
-	  // 	   labFrameSite1[1]*labFrameSite1[1]+
-	  // 	   labFrameSite1[2]*labFrameSite1[2]);
-
-	  // labframeNormalized1[0] = labFrameSite1[0]/labFrameSite1norm;
-	  // labframeNormalized1[1] = labFrameSite1[1]/labFrameSite1norm;
-	  // labframeNormalized1[2] = labFrameSite1[2]/labFrameSite1norm;
-	}	
+	}
 
       double rsite1[3] = {
 	labFrameSite1[0]+x[i][0],
@@ -208,15 +140,10 @@ void PairCoulCutOffcentre::compute(int eflag, int vflag)
 	if (nsites[jtype] > 0) {
 	  jquat = bonus[ellipsoid[j]].quat;
 	  MathExtra::quat_to_mat(jquat, rotMat2);
-	  //this was originally here but why not quat_to_mat as for site 1? 
-	  //MathExtra::quat_to_mat_trans(jquat, rotMat2);
 	}
 
 	for (int s2 = 1; s2 <= nsites[jtype]; ++s2) {
-	  //std::cout << "[PairCoulCutOffcentre] s1 " << s2 << "/" << nsites[jtype] << std::endl;  
-	      	  
 	  double labFrameSite2[3] = {0.0, 0.0, 0.0};
-	  //double labframeNormalized2[3] = {0.0, 0.0, 0.0};
 	  if (molFrameSite[jtype][s2][0] != 0.0 ||
 	      molFrameSite[jtype][s2][1] != 0.0 ||
 	      molFrameSite[jtype][s2][2] != 0.0)
@@ -228,42 +155,20 @@ void PairCoulCutOffcentre::compute(int eflag, int vflag)
 	      };
 
 	      MathExtra::matvec(rotMat2, ms2, labFrameSite2);
-	      // double labFrameSite2norm =
-	      //   sqrt(labFrameSite2[0]*labFrameSite2[0]+
-	      // 	 labFrameSite2[1]*labFrameSite2[1]+
-	      // 	 labFrameSite2[2]*labFrameSite2[2]);
-
-	      // labframeNormalized2[0] = labFrameSite2[0]/labFrameSite2norm;
-	      // labframeNormalized2[1] = labFrameSite2[1]/labFrameSite2norm;
-	      // labframeNormalized2[2] = labFrameSite2[2]/labFrameSite2norm;
 	    }
-		
+
 	  double rsite2[3] = {
 	    labFrameSite2[0]+x[j][0],
 	    labFrameSite2[1]+x[j][1],
 	    labFrameSite2[2]+x[j][2]
 	  };
-		
+
 	  // r12 = site center to site center vector
 	  r12[0] = rsite1[0]-rsite2[0];
 	  r12[1] = rsite1[1]-rsite2[1];
 	  r12[2] = rsite1[2]-rsite2[2];
 
-	  //domain->minimum_image(r12[0], r12[1], r12[2]);
-
 	  rsq = MathExtra::dot3(r12, r12);
-	      
-	  // std::cout << "[PairCoulCutOffcentre] r " << rsq << " " <<  cutsq[itype][jtype] <<std::endl;
-	  // std::cout << "[PairCoulCutOffcentre] site "
-	  // 		<< rsite1[0] << " " << rsite2[0] << " "
-	  // 		<< rsite1[1] << " " << rsite2[1] << " "
-	  // 		<< rsite1[2] << " " << rsite2[2] << " "
-	  // 		<< std::endl;
-	  // std::cout << "[PairCoulCutOffcentre] frame "
-	  // 		<< labFrameSite1[0] << " " << x[i][0] << " "
-	  // 		<< labFrameSite1[1] << " " << x[i][1] << " "
-	  // 		<< labFrameSite1[2] << " " << x[i][2] << " "
-	  // 		<< std::endl;
 
 	  if (rsq < cutsq[itype][jtype]) {
 	    r2inv = 1.0/rsq;
@@ -272,81 +177,28 @@ void PairCoulCutOffcentre::compute(int eflag, int vflag)
 	    q2 = molFrameCharge[jtype][s2];
 
 	    forcecoul = qqrd2e * q1*q2*rinv;
-	    if (eflag) 
+	    if (eflag)
 	      ecoul = factor_coul * forcecoul;
-
-	    // std::cout << "[PairCoulCutOffcentre] "
-	    // 	      << itype << " " << jtype << " *"
-	    // 	      << factor_coul << " " << sbmask(j) << " " << j
-	    // 	      << s1 << " " << s2 << " "
-	    // 	      << q1 << " " << q2 << " "
-	    // 	      << rsite1[0] << " " << rsite1[1] << " " << rsite1[2] << " "
-	    // 	      << rsite2[0] << " " << rsite2[1] << " " << rsite2[2] << " " 
-	    // 	      << sqrt(rsq) << " " << factor_coul * forcecoul
-	    // 	      << std::endl;
-
 	    fpair = factor_coul*forcecoul*r2inv;
 
 	    if (evflag) ev_tally(i,j,nlocal,newton_pair,
 				 0.0,ecoul,fpair,r12[0],r12[1],r12[2]);
 
-	    //if (eflag) 
-	    //		  std::cout << "[PairCoulCutOffcentre] e " << ecoul << " " << rinv << " cut " << cutsq[itype][jtype] << std::endl;  
-
-	    // if (evflag) ev_tally_xyz(i,j,nlocal,newton_pair,
-	    // 			 evdwl,ecoul,fforce[0],fforce[1],fforce[2],
-	    // 			 -r12[0],-r12[1],-r12[2]);
-		
 	    fforce[0] = r12[0]*fpair; ///r12n;
 	    fforce[1] = r12[1]*fpair; ///r12n;
 	    fforce[2] = r12[2]*fpair; ///r12n;
 
-	    // F_parallel = F_tot . r_normalized		
+	    // F_parallel = F_tot . r_normalized
 	    f[i][0] += fforce[0];
 	    f[i][1] += fforce[1];
 	    f[i][2] += fforce[2];
-	    // f[i][0] += labframeNormalized1[0]*fforce[0];
-	    // f[i][1] += labframeNormalized1[1]*fforce[1];
-	    // f[i][2] += labframeNormalized1[2]*fforce[2];
 
 	    // Torque = r x F_tot
 	    // torque on 1 = -pos1 x grad_pos1
 	    MathExtra::cross3(labFrameSite1, fforce, ttor);
-		
-	    // std::cout << "[PairCoulCutOffcentre] tor 1 "
-	    //  	  << ttor[0] << " " 
-	    //  	  << ttor[1] << " "  
-	    //  	  << ttor[2] << " "  
-	    //  	  << std::endl;
-
-	    // std::cout << "[PairCoulCutOffcentre] for 1 "
-	    //  	  << f[i][0] << " " 
-	    //  	  << f[i][1] << " "  
-	    //  	  << f[i][2] << " "  
-	    //  	  << labframeNormalized1[0]*fforce[0] << " " 
-	    //  	  << labframeNormalized1[1]*fforce[1] << " "  
-	    //  	  << labframeNormalized1[2]*fforce[2] << " "  
-	    // 	  << fpair << " "
-	    //  	  << labframeNormalized1[0] << " " 
-	    //  	  << labframeNormalized1[1] << " "  
-	    //  	  << labframeNormalized1[2] << " "  
-	    //  	  << r12[0] << " " 
-	    //  	  << r12[1] << " "  
-	    //  	  << r12[2] << " "  
-	    //  	  << fforce[0] << " " 
-	    //  	  << fforce[1] << " "  
-	    //  	  << fforce[2] << " "  
-	    //  	  << std::endl;
-
 	    tor[i][0] += ttor[0];
 	    tor[i][1] += ttor[1];
 	    tor[i][2] += ttor[2];
-
-	    // std::cout << "[PairCoulCutOffcentre] gtor 1 "
-	    //  	  << tor[i][0] << " " 
-	    //  	  << tor[i][1] << " "  
-	    //  	  << tor[i][2] << " "  
-	    //  	  << std::endl;
 
 	    if (newton_pair || j < nlocal) {
 	      // F_parallel = F_tot . r_normalized
@@ -354,34 +206,11 @@ void PairCoulCutOffcentre::compute(int eflag, int vflag)
 	      f[j][1] -= fforce[1]; ///r12n;
 	      f[j][2] -= fforce[2]; ///r12n;
 
-	      // f[j][0] -= labframeNormalized2[0]*fforce[0]; ///r12n;
-	      // f[j][1] -= labframeNormalized2[1]*fforce[1]; ///r12n;
-	      // f[j][2] -= labframeNormalized2[2]*fforce[2]; ///r12n;
 
-	      //std::cout << "[PairCoulCutOffcentre] distance " << sqrt(rsq) << " " << cutsq[itype][jtype] << " " << ecoul<< std::endl;  
 	      MathExtra::cross3(labFrameSite2, fforce, ttor);
-		    
-	      // std::cout << "[PairCoulCutOffcentre] tor 2 "
-	      // 	      << ttor[0] << " " 
-	      // 	      << ttor[1] << " "  
-	      // 	      << ttor[2] << " "  
-	      // 	      << std::endl;
-
-	      // std::cout << "[PairCoulCutOffcentre] for 2 "
-	      // 	      << labframeNormalized2[0]*fforce[0] << " " 
-	      // 	      << labframeNormalized2[1]*fforce[1] << " "  
-	      // 	      << labframeNormalized2[2]*fforce[2] << " "  
-	      // 	      << std::endl;
-
 	      tor[j][0] -= ttor[0];
 	      tor[j][1] -= ttor[1];
 	      tor[j][2] -= ttor[2];
-
-	      // std::cout << "[PairCoulCutOffcentre] gtor 2 "
-	      //  	  << tor[j][0] << " " 
-	      //  	  << tor[j][1] << " "  
-	      //  	  << tor[j][2] << " "  
-	      //  	  << std::endl;
 	    }
 	  }
 	}
@@ -424,13 +253,6 @@ void PairCoulCutOffcentre::settings(int narg, char **arg)
   int nCoulSites = force->inumeric(FLERR, arg[1]);
   unsigned start_sitesspec_argcount = 2;
 
-  // std::cout << "[PairCoulCutOffcentre] coul sites " <<
-  //   nCoulSites << " " << std::endl;
-  // std::cout << "[PairCoulCutOffcentre] atom types " <<
-  //   atom->ntypes << " " << std::endl;
-  // std::cout << "[PairCoulCutOffcentre] cutoff " <<
-  //   cut_coul << " " << std::endl;
-
   int atomType[nCoulSites+1];
 
   nsites = new int[atom->ntypes+1];
@@ -444,51 +266,28 @@ void PairCoulCutOffcentre::settings(int narg, char **arg)
   unsigned argcount = start_sitesspec_argcount;
   for (int t = 1; t <= nCoulSites; ++t)
     {
-      // std::cout << "[PairCoulCutOffcentre] HERE " 
-      // 		<< t << " / " << nCoulSites
-      // 		<< arg[argcount]
-      // 		<< std::endl;
-
       atomType[t] = force->inumeric(FLERR, arg[argcount++]);
       ++nsites[atomType[t]];
 
       argcount += 4;
-      // std::cout << "[PairCoulCutOffcentre] coulsite " << t
-      //           << " atype " << atomType[t]
-      //           << " ncoulsites " << nsites[atomType[t]]<< std::endl;
     }
 
   argcount = start_sitesspec_argcount;
   for (int type = 1; type <= atom->ntypes; ++type)
     {
-      //int type = atomType[t];
-
       molFrameSite[type] = new double*[nsites[type]+1];
       molFrameCharge[type] = new double[nsites[type]+1];
 
       for (int site = 1; site <= nsites[type]; ++site)
         {
           ++argcount;
-          // std::cout << "[PairCoulCutOffcentre] site " <<
-          //   site << "/" << nsites[type] << " type "<< type << std::endl;
 
           molFrameSite[type][site] = new double[3];
           molFrameSite[type][site][0] = force->numeric(FLERR,arg[argcount++]);
           molFrameSite[type][site][1] = force->numeric(FLERR,arg[argcount++]);
           molFrameSite[type][site][2] = force->numeric(FLERR,arg[argcount++]);
-	  
-          molFrameCharge[type][site] = force->numeric(FLERR,arg[argcount++]);
 
-          // std::cout << "[PairCoulCutOffcentre] type " <<
-          //   type << " " << " site " << site
-          //           << " pos "
-          //           << " " << molFrameSite[type][site][0] 
-          //           << " " << molFrameSite[type][site][1] 
-          //           << " " << molFrameSite[type][site][2] 
-          //           << " charge "
-          //           << " " << molFrameCharge[type][site]
-          //           << " arg " << argcount
-          //           << std::endl;	  
+          molFrameCharge[type][site] = force->numeric(FLERR,arg[argcount++]);
         }
 
       totsites += nsites[type];
@@ -541,9 +340,6 @@ void PairCoulCutOffcentre::coeff(int narg, char **arg)
 
 void PairCoulCutOffcentre::init_style()
 {
-  // if (!atom->q_flag)
-  //   error->all(FLERR,"Pair style coul/cut/offcengtre requires atom attribute q");
-
   neighbor->request(this);
 }
 
@@ -643,10 +439,9 @@ double PairCoulCutOffcentre::single(int i, int j, int itype, int jtype,
 
   itype = type[i];
 
-  // accumulated...
   double phicoul = 0.0;
   fpair = 0.0;
-  
+
   // rotate site1 in lab frame
   double rotMat1[3][3];
   if (nsites[itype] > 0) {
@@ -656,7 +451,7 @@ double PairCoulCutOffcentre::single(int i, int j, int itype, int jtype,
 
   for (int s1 = 1; s1 <= nsites[itype]; ++s1) {
     q1 = molFrameCharge[itype][s1];
-	  
+
     double labFrameSite1[3] = {0.0, 0.0, 0.0};
     if (molFrameSite[itype][s1][0] != 0.0 ||
 	molFrameSite[itype][s1][1] != 0.0 ||
@@ -669,7 +464,7 @@ double PairCoulCutOffcentre::single(int i, int j, int itype, int jtype,
 	};
 
 	MathExtra::matvec(rotMat1, ms1, labFrameSite1);
-      }	
+      }
 
     double rsite1[3] = {
       labFrameSite1[0]+x[i][0],
@@ -698,13 +493,13 @@ double PairCoulCutOffcentre::single(int i, int j, int itype, int jtype,
 
 	  MathExtra::matvec(rotMat2, ms2, labFrameSite2);
 	}
-		
+
       double rsite2[3] = {
 	labFrameSite2[0]+x[j][0],
 	labFrameSite2[1]+x[j][1],
 	labFrameSite2[2]+x[j][2]
       };
-		
+
       // r12 = site center to site center vector
       r12[0] = rsite1[0]-rsite2[0];
       r12[1] = rsite1[1]-rsite2[1];
@@ -732,13 +527,10 @@ double PairCoulCutOffcentre::single(int i, int j, int itype, int jtype,
 
 /* ---------------------------------------------------------------------- */
 
-// unsure about that
-// should give hort range cutoff but cut_global is long?
 void *PairCoulCutOffcentre::extract(const char *str, int &dim)
 {
   if (strcmp(str,"cut_coul") == 0) {
     dim = 0;
-    //printf("PairCoulCutOffcentre called %g\n", cut_coul);
     return (void *) &cut_coul;
   }
   return NULL;

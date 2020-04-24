@@ -11,6 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
+/* ----------------------------------------------------------------------
+   Contributing author: Matteo Ricci
+   -------------------------------------------------------------------------*/
+
 #ifdef FIX_CLASS
 
 FixStyle(temp/berendsen/asphere,FixTempBerendsenAsphere)

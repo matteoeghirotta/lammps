@@ -11,6 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------
+   Contributing author: Matteo Ricci <matteoeghirotta@gmail.com>
+--------------------------------------------------------------------------- */
+
 #ifndef LMP_BOND_MOLC_H
 #define LMP_BOND_MOLC_H
 

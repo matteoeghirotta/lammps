@@ -11,6 +11,10 @@
    See the README file in the top-level LAMMPS directory.
    -------------------------------------------------------------------------*/
 
+/* -------------------------------------------------------------------------
+   Contributing author: Matteo Ricci <matteoeghirotta@gmail.com>
+--------------------------------------------------------------------------- */
+
 #ifdef BOND_CLASS
 
 BondStyle(ellipsoid,BondEllipsoid)
@@ -20,19 +24,19 @@ BondStyle(ellipsoid,BondEllipsoid)
 #ifndef LMP_BOND_ELLIPSOID_H
 #define LMP_BOND_ELLIPSOID_H
 
-#include <stdio.h>
+#include <cstdio>
 #include <sstream>
 #include <vector>
 #include <algorithm>
 #include <string>
 #include <map>
-#include <math.h>
+#include <cmath>
 #include "bond_molc.h"
 #include "math_extra.h"
 #include "math_const.h"
 
 namespace LAMMPS_NS {
- 
+
   class BondEllipsoid : public BondMolc {
   public:
     BondEllipsoid(class LAMMPS *);
@@ -55,11 +59,11 @@ namespace LAMMPS_NS {
     torque1_numeric(int btype, int atom1, int atom2, double delta_move);
     std::vector<double>
     torque2_numeric(int btype, int atom1, int atom2, double delta_move);
-    
+
     class CouplerBondPotential {
     public:
       virtual std::string name() const = 0;
-      virtual bool contribute_to_virial() const = 0;      
+      virtual bool contribute_to_virial() const = 0;
       virtual std::vector<double> force1(double rnorm, double fbond,
 					 double* v1, double* v2) = 0;
       virtual std::vector<double> force2(double rnorm, double fbond,
@@ -78,12 +82,12 @@ namespace LAMMPS_NS {
 					       rank(r),
 					       coupler(c)
 	{}
-    
+
       virtual int maxparams() const = 0;
       virtual int nparams() const = 0;
       bool contribute_to_virial() const {
 	return coupler->contribute_to_virial();
-      }      
+      }
 
       std::vector<double>& get_params() { return params; }
       std::string get_name() {
@@ -92,7 +96,7 @@ namespace LAMMPS_NS {
 	return name + ss.str() + coupler->name();
       }
       virtual std::pair<double, double> compute(double x) = 0;
-      virtual CouplerBondPotential *potential() { 
+      virtual CouplerBondPotential *potential() {
 	return coupler;
       }
 
@@ -105,7 +109,7 @@ namespace LAMMPS_NS {
 
     class CouplerRRBondPotential : public CouplerBondPotential {
     public:
-      std::string name() const { return std::string("RR"); } 
+      std::string name() const { return std::string("RR"); }
       bool contribute_to_virial() const { return true; }
       std::vector<double> force1(double rnorm,
 				 double fbond,
@@ -134,10 +138,10 @@ namespace LAMMPS_NS {
 	return std::vector<double>(3, 0.0);
       }
     };
-    
+
     class CouplerXXBondPotential : public CouplerBondPotential {
     public:
-      std::string name() const { return std::string("XX"); } 
+      std::string name() const { return std::string("XX"); }
       bool contribute_to_virial() const { return false; }
       std::vector<double> force1(double rnorm, double fbond,
 				 double* v1, double* v2) {
@@ -169,8 +173,8 @@ namespace LAMMPS_NS {
 
     class CouplerXRBondPotential : public CouplerBondPotential {
     public:
-      std::string name() const { return std::string("XR"); } 
-      bool contribute_to_virial() const { return true; } // true but must use different formulas 
+      std::string name() const { return std::string("XR"); }
+      bool contribute_to_virial() const { return true; }
       std::vector<double> force1(double rnorm, double fbond,
 				 double* x, double* r) {
 	double n[3];
@@ -213,7 +217,7 @@ namespace LAMMPS_NS {
 
     class CouplerRXBondPotential : public CouplerBondPotential {
     public:
-      std::string name() const { return std::string("RX"); } // true but must use different formulas 
+      std::string name() const { return std::string("RX"); }
       bool contribute_to_virial() const { return true; }
       std::vector<double> force1(double rnorm, double fbond,
 				 double* r, double* x) {
@@ -255,14 +259,15 @@ namespace LAMMPS_NS {
 	return t;
       }
     };
-    
+
     class PolynomialBondPotential : public BondPotential {
     public:
       PolynomialBondPotential(std::string n,
 			      int r,
-			      CouplerBondPotential * c) : BondPotential(n, r, c)
+			      CouplerBondPotential * c) :
+        BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return rank*2+1;
       }
@@ -270,7 +275,7 @@ namespace LAMMPS_NS {
       int maxparams() const {
 	return rank*2+1;
       }
-    
+
       std::pair<double, double> compute(double x) {
       	int const p_rank = 2;
 
@@ -281,27 +286,16 @@ namespace LAMMPS_NS {
 	  double p2 = params[i*p_rank+2];
 
 	  double pow1 = p1*pow(x-p2, (double)(i));
-	  //double pow1 = p1*pow(x-p2, (double)(i+1));
-	  
+
       	  energy += pow1*(x-p2);
 
       	  grad += (double)(i+1)*pow1;
-
-      	  // energy +=
-      	  //   p1*pow(x-p2, (double)(i+2))
-      	  //   +
-      	  //   p3*pow(x-p4, (double)(i+2));
-
-      	  // grad +=
-      	  //   (double)(i+2)*p1*pow(x-p2, (double)(i+2-1))
-      	  //   +
-      	  //   (double)(i+2)*p3*pow(x-p4, (double)(i+2-1));
       	}
 
       	return std::make_pair(energy, grad);
       }
-    };  
-    
+    };
+
     class ExponentialBondPotential : public BondPotential {
     public:
 
@@ -310,7 +304,7 @@ namespace LAMMPS_NS {
 			       CouplerBondPotential * c)
 	: BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return 6;
       }
@@ -333,10 +327,10 @@ namespace LAMMPS_NS {
 
 	double grad = -1.0/(exp1 + exp2)*(dexp1 + dexp2);
 
-    	return std::make_pair(energy, grad);	
+    	return std::make_pair(energy, grad);
       }
     };
-  
+
     class CosinesBondPotential : public BondPotential {
     public:
 
@@ -345,7 +339,7 @@ namespace LAMMPS_NS {
 			   CouplerBondPotential * c)
 	: BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return rank*2+1;
       }
@@ -362,7 +356,7 @@ namespace LAMMPS_NS {
 	for (int i=0; i<rank; ++i) {
 	  double p1 = params[i*p_rank+1];
 	  double p2 = params[i*p_rank+2];
-	  
+
 	  energy += p1*(1.0-cos(MathConst::MY_PI*(i+1)*x-p2));
 	  grad   += p1*(i+1)*MathConst::MY_PI*sin(MathConst::MY_PI*(i+1)*x-p2);
 	}
@@ -379,7 +373,7 @@ namespace LAMMPS_NS {
 			       CouplerBondPotential * c)
 	: BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return rank*2+1;
       }
@@ -396,15 +390,16 @@ namespace LAMMPS_NS {
 	for (int i=0; i<rank; ++i) {
 	  double p1 = params[i*p_rank+1];
 	  double p2 = params[i*p_rank+2];
-	  
+
 	  energy += p1*(1.0-cos(0.5*MathConst::MY_PI*(i+1)*x-p2));
-	  grad   += p1*0.5*(i+1)*MathConst::MY_PI*sin(0.5*MathConst::MY_PI*(i+1)*x-p2);
+          grad   +=
+            p1*0.5*(i+1)*MathConst::MY_PI*sin(0.5*MathConst::MY_PI*(i+1)*x-p2);
 	}
 
     	return std::make_pair(energy, grad);
       }
     };
-    
+
     class FourierBondPotential : public BondPotential {
     public:
 
@@ -412,7 +407,7 @@ namespace LAMMPS_NS {
 			   int r,
 			   CouplerBondPotential * c) : BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return rank*3+1;
       }
@@ -434,17 +429,15 @@ namespace LAMMPS_NS {
 
 	  if (p3 == 0)
 	    p3 = 10.0e-9;
-        
+
 	  double arg  = (i+1)*MathConst::MY_PI/p3;
 	  double valc = cos(arg*x);
 	  double vals = sin(arg*x);
-	  // double valc = p1*cos(i*MathConst::MY_PI*x/p3);
-	  // double vals = p2*sin(i*MathConst::MY_PI*x/p3);
 
 	  energy += p1*valc + p2*vals;
 	  grad   += -arg*p1*vals + arg*p2*valc;
 	}
-	
+
     	return std::make_pair(energy, grad);
       }
     };
@@ -454,9 +447,10 @@ namespace LAMMPS_NS {
 
       FourierAngBondPotential(std::string n,
 			      int r,
-			      CouplerBondPotential * c) : BondPotential(n, r, c)
+			      CouplerBondPotential * c) :
+        BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return rank*2+1;
       }
@@ -474,7 +468,7 @@ namespace LAMMPS_NS {
 	for (int i=0; i<rank; ++i) {
 	  double p1 = params[i*p_rank+1];
 	  double p2 = params[i*p_rank+2];
-        
+
 	  double arg  = (i+1)*MathConst::MY_PI;
 	  double valc = cos(arg*x);
 	  double vals = sin(arg*x);
@@ -482,11 +476,11 @@ namespace LAMMPS_NS {
 	  energy += p1*valc + p2*vals;
 	  grad   += -arg*p1*vals + arg*p2*valc;
 	}
-	
+
     	return std::make_pair(energy, grad);
       }
     };
-    
+
     class ChebyshevBondPotential : public BondPotential {
     public:
       ChebyshevBondPotential(std::string n,
@@ -494,7 +488,7 @@ namespace LAMMPS_NS {
 			     CouplerBondPotential * c) :
 	BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return rank;
       }
@@ -510,28 +504,47 @@ namespace LAMMPS_NS {
 	energy += (rank > 1  ? params[1] : 0.0)*x;
 	energy += (rank > 2  ? params[2] : 0.0)*(2.0*pow(x,2)-1.0);
 	energy += (rank > 3  ? params[3] : 0.0)*(4.0*pow(x,3)-3.0*x);
-	energy += (rank > 4  ? params[4] : 0.0)*(8.0*pow(x,4)-8.0*pow(x,2)+1.0);
-	energy += (rank > 5  ? params[5] : 0.0)*(16.0*pow(x,5)-20.0*pow(x,3)+5.0*x);
-	energy += (rank > 6  ? params[6] : 0.0)*(32.0*pow(x,6)-48.0*pow(x,4)+18.0*pow(x,2)-1.0);
-	energy += (rank > 7  ? params[7] : 0.0)*(64.0*pow(x,7)-112.0*pow(x,5)+56.0*pow(x,3)-7.0*x);
-	energy += (rank > 8  ? params[8] : 0.0)*(128.0*pow(x,8)-256.0*pow(x,6)+160.0*pow(x,4)-32.0*pow(x,2)+1.0);
-	energy += (rank > 9  ? params[9] : 0.0)*(256.0*pow(x,9)-576.0*pow(x,7)+432.0*pow(x,5)-120.0*pow(x,3)+9.0*x);
-	energy += (rank > 10 ? params[10]: 0.0)*(512.0*pow(x,10)-1280.0*pow(x,8)+1120.0*pow(x,6)-400.0*pow(x,4)+50.0*pow(x,2)-1.0);
-	energy += (rank > 11 ? params[11]: 0.0)*(1024.0*pow(x,11)-2816.0*pow(x,9)+2816.0*pow(x,7)-1232.0*pow(x,5)+220.0*pow(x,3)-11.0*x);
+	energy += (rank > 4  ? params[4] : 0.0)*(8.0*pow(x,4)
+                                                 -8.0*pow(x,2)+1.0);
+	energy += (rank > 5  ? params[5] : 0.0)*(16.0*pow(x,5)-20.0*pow(x,3)+
+                                                 5.0*x);
+        energy += (rank > 6  ? params[7] : 0.0)*
+          (32.0*pow(x,6)-48.0*pow(x,4)+18.0*pow(x,2)-1.0);
+        energy += (rank > 8  ? params[7] : 0.0)*
+          (64.0*pow(x,7)-112.0*pow(x,5)+56.0*pow(x,3)-7.0*x);
+        energy += (rank > 8  ? params[8] : 0.0)*
+          (128.0*pow(x,8)-256.0*pow(x,6)+160.0*pow(x,4)-32.0*pow(x,2)+1.0);
+        energy += (rank > 9  ? params[9] : 0.0)*
+          (256.0*pow(x,9)-576.0*pow(x,7)+432.0*pow(x,5)-120.0*pow(x,3)+9.0*x);
+        energy += (rank > 10 ? params[10]: 0.0)*
+          (512.0*pow(x,10)-1280.0*pow(x,8)+1120.0*pow(x,6)-400.0*pow(x,4)+
+           50.0*pow(x,2)-1.0);
+        energy += (rank > 11 ? params[11]: 0.0)*
+          (1024.0*pow(x,11)-2816.0*pow(x,9)+2816.0*pow(x,7)-1232.0*pow(x,5)+
+           220.0*pow(x,3)-11.0*x);
 
       	double grad = 0.0;
-	
+
 	grad += (rank > 1  ? params[1] : 0.0);
 	grad += (rank > 2  ? params[2] : 0.0)*4.0*x;
 	grad += (rank > 3  ? params[3] : 0.0)*(12.0*pow(x,2)-3.0);
 	grad += (rank > 4  ? params[4] : 0.0)*(32.0*pow(x,3)-16.0*x);
-	grad += (rank > 5  ? params[5] : 0.0)*(80.0*pow(x,4)-60.0*pow(x,2)+5.0);
-	grad += (rank > 6  ? params[6] : 0.0)*(192.0*pow(x,5)-192.0*pow(x,3)+32.0*x);
-	grad += (rank > 7  ? params[7] : 0.0)*(448.0*pow(x,6)-560.0*pow(x,4)+168.0*pow(x,2)-7.0);
-	grad += (rank > 8  ? params[8] : 0.0)*(1024.0*pow(x,7)-1536.0*pow(x,5)+640.0*pow(x,3)-64.0*x);
-	grad += (rank > 9  ? params[9] : 0.0)*(2304.0*pow(x,8)-4032.0*pow(x,6)+2160.0*pow(x,4)-360.0*pow(x,2)+9.0);
-	grad += (rank > 10 ? params[10]: 0.0)*(5120.0*pow(x,9)-10240.0*pow(x,7)+6720.0*pow(x,5)-1600.0*pow(x,3)+100.0*x);
-	grad += (rank > 11 ? params[11]: 0.0)*(11264.0*pow(x,10)-25344.0*pow(x,8)+19712.0*pow(x,6)-6160.0*pow(x,4)+660.0*pow(x,2)-11.0);
+	grad += (rank > 5  ? params[5] : 0.0)*(80.0*pow(x,4)
+                                               -60.0*pow(x,2)+5.0);
+	grad += (rank > 6  ? params[6] : 0.0)*
+          (192.0*pow(x,5)-192.0*pow(x,3)+32.0*x);
+	grad += (rank > 7  ? params[7] : 0.0)*
+          (448.0*pow(x,6)-560.0*pow(x,4)+168.0*pow(x,2)-7.0);
+	grad += (rank > 8  ? params[8] : 0.0)*
+          (1024.0*pow(x,7)-1536.0*pow(x,5)+640.0*pow(x,3)-64.0*x);
+	grad += (rank > 9  ? params[9] : 0.0)*
+          (2304.0*pow(x,8)-4032.0*pow(x,6)+2160.0*pow(x,4)-360.0*pow(x,2)+9.0);
+	grad += (rank > 10 ? params[10]: 0.0)*
+          (5120.0*pow(x,9)-10240.0*pow(x,7)+6720.0*pow(x,5)-1600.0*
+           pow(x,3)+100.0*x);
+	grad += (rank > 11 ? params[11]: 0.0)*
+          (11264.0*pow(x,10)-25344.0*pow(x,8)+19712.0*pow(x,6)-6160.0*
+           pow(x,4)+660.0*pow(x,2)-11.0);
 
 	return std::make_pair(energy, grad);
       }
@@ -544,7 +557,7 @@ namespace LAMMPS_NS {
 			   CouplerBondPotential * c) :
 	BondPotential(n, r, c)
 	{}
-    
+
       int nparams() const {
 	return rank;
       }
@@ -552,7 +565,7 @@ namespace LAMMPS_NS {
       int maxparams() const {
 	return 11;
       }
-    
+
       std::pair<double, double> compute(double x) {
       	double energy = 0.0;
 
@@ -568,13 +581,23 @@ namespace LAMMPS_NS {
 	energy += (rank > 1 ? factor*params[2] : 0.0)*2.0*x;
 	energy += (rank > 2 ? factor*params[3] : 0.0)*(4.0*pow(x,2)-2.0);
 	energy += (rank > 3 ? factor*params[4] : 0.0)*(8.0*pow(x,3)-12.0*x);
-	energy += (rank > 4 ? factor*params[5] : 0.0)*(16.0*pow(x,4)-48.0*pow(x,2)+12.0);
-	energy += (rank > 5 ? factor*params[6] : 0.0)*(32.0*pow(x,5)-160.0*pow(x,3)+120.0*x);
-	energy += (rank > 6 ? factor*params[7] : 0.0)*(64.0*pow(x,6)-480.0*pow(x,4)+720.0*pow(x,2)-120.0);
-	energy += (rank > 7 ? factor*params[8] : 0.0)*(128.0*pow(x,7)-1344.0*pow(x,5)+3360.0*pow(x,3)-1680.0*x);
-	energy += (rank > 8 ? factor*params[9] : 0.0)*(256.0*pow(x,8)-3584.0*pow(x,6)+13440.0*pow(x,4)-13440.0*pow(x,2)+1680.0);
-	energy += (rank > 9 ? factor*params[10] : 0.0)*(512.0*pow(x,9)-9216.0*pow(x,7)+48384.0*pow(x,5)-80640.0*pow(x,3)+30240.0*x);
-	energy += (rank > 10? factor*params[11]: 0.0)*(1024.0*pow(x,10)-23040.0*pow(x,8)+161280.0*pow(x,6)-403200.0*pow(x,4)+302400.0*pow(x,2)-30240.0);
+	energy += (rank > 4 ? factor*params[5] : 0.0)*
+          (16.0*pow(x,4)-48.0*pow(x,2)+12.0);
+	energy += (rank > 5 ? factor*params[6] : 0.0)*
+          (32.0*pow(x,5)-160.0*pow(x,3)+120.0*x);
+	energy += (rank > 6 ? factor*params[7] : 0.0)*
+          (64.0*pow(x,6)-480.0*pow(x,4)+720.0*pow(x,2)-120.0);
+	energy += (rank > 7 ? factor*params[8] : 0.0)*
+          (128.0*pow(x,7)-1344.0*pow(x,5)+3360.0*pow(x,3)-1680.0*x);
+	energy += (rank > 8 ? factor*params[9] : 0.0)*
+          (256.0*pow(x,8)-3584.0*pow(x,6)+13440.0*pow(x,4)-13440.0*
+           pow(x,2)+1680.0);
+	energy += (rank > 9 ? factor*params[10] : 0.0)*
+          (512.0*pow(x,9)-9216.0*pow(x,7)+48384.0*pow(x,5)-80640.0*
+           pow(x,3)+30240.0*x);
+	energy += (rank > 10? factor*params[11]: 0.0)*
+          (1024.0*pow(x,10)-23040.0*pow(x,8)+161280.0*pow(x,6)-403200.0*
+           pow(x,4)+302400.0*pow(x,2)-30240.0);
 
       	double grad = 0.0;
 
@@ -585,25 +608,33 @@ namespace LAMMPS_NS {
 	grad += (rank > 2 ? factor*params[3] : 0.0)*8.0*x;
 	grad += (rank > 3 ? factor*params[4] : 0.0)*(24.0*pow(x,2)-12.0);
 	grad += (rank > 4 ? factor*params[5] : 0.0)*(64.0*pow(x,3)-96.0*x);
-	grad += (rank > 5 ? factor*params[6] : 0.0)*(160.0*pow(x,4)-480.0*pow(x,2)+120.0);
-	grad += (rank > 6 ? factor*params[7] : 0.0)*(384.0*pow(x,5)-25920.0*pow(x,3)+1440.0*x);
-	grad += (rank > 7 ? factor*params[8] : 0.0)*(896.0*pow(x,6)-6720.0*pow(x,4)+10080.0*pow(x,2)-1680.0);
-	grad += (rank > 8 ? factor*params[9] : 0.0)*(2048.0*pow(x,7)-21504.0*pow(x,5)+53760.0*pow(x,3)-26880.0*x);
-	grad += (rank > 9 ? factor*params[10] : 0.0)*(4608.0*pow(x,8)-64512.0*pow(x,6)+241920.0*pow(x,4)-241920.0*pow(x,2)+30240.0);
-	grad += (rank > 10? factor*params[11]: 0.0)*(10240.0*pow(x,9)-184320.0*pow(x,7)+967680.0*pow(x,5)-1612800.0*pow(x,3)+3225600.0*x);
+	grad += (rank > 5 ? factor*params[6] : 0.0)*
+          (160.0*pow(x,4)-480.0*pow(x,2)+120.0);
+	grad += (rank > 6 ? factor*params[7] : 0.0)*
+          (384.0*pow(x,5)-25920.0*pow(x,3)+1440.0*x);
+	grad += (rank > 7 ? factor*params[8] : 0.0)*
+          (896.0*pow(x,6)-6720.0*pow(x,4)+10080.0*pow(x,2)-1680.0);
+	grad += (rank > 8 ? factor*params[9] : 0.0)*
+          (2048.0*pow(x,7)-21504.0*pow(x,5)+53760.0*pow(x,3)-26880.0*x);
+	grad += (rank > 9 ? factor*params[10] : 0.0)*
+          (4608.0*pow(x,8)-64512.0*pow(x,6)+241920.0*pow(x,4)-241920.0*
+           pow(x,2)+30240.0);
+	grad += (rank > 10? factor*params[11]: 0.0)*
+          (10240.0*pow(x,9)-184320.0*pow(x,7)+967680.0*pow(x,5)-1612800.0*
+           pow(x,3)+3225600.0*x);
 
 	return std::make_pair(energy, grad);
       }
     };
-    
+
     class BondPotentialFactory {
     public:
       BondPotentialFactory() {
 	if (allowed.size() > 0 || coupler.size() > 0) {
 	  exit(1);
 	}
-	
-	allowed.push_back("polynomial");
+
+	allowed.push_back("poly");
 	allowed.push_back("fourier");
 	allowed.push_back("cosines");
 	allowed.push_back("cosines_half");
@@ -636,12 +667,14 @@ namespace LAMMPS_NS {
       }
 
       BondPotential* create(std::string type, int rank, int index) {
-	if (type == std::string("polynomial"))
-	  return new PolynomialBondPotential("polynomial", rank, coupler[index]);
+	if (type == std::string("poly"))
+	  return new PolynomialBondPotential("poly",
+                                             rank, coupler[index]);
 	else if (type == std::string("cosines"))
 	  return new CosinesBondPotential("cosines", rank, coupler[index]);
-	else if (type == std::string("cosines_half"))
-	  return new CosinesHalfBondPotential("cosines_half", rank, coupler[index]);
+	else if (type == std::string("cos"))
+	  return new CosinesHalfBondPotential("cos",
+                                              rank, coupler[index]);
 	else if (type == std::string("fourier"))
 	  return new FourierBondPotential("fourier", rank,
 					  coupler[index]);
@@ -663,19 +696,18 @@ namespace LAMMPS_NS {
       std::vector<std::string> allowed;
       std::vector<CouplerBondPotential*> coupler;
     };
-  
+
   protected:
     BondPotentialFactory factory;
     std::vector<std::vector<BondPotential*> > bondPotSet;
 
     static int const pterms = 16;
     class AtomVecEllipsoid *avec;
-    
+
     void allocate();
     char* hfilename(char const*);
-    
-  private:    
-    //  FILE* hdebug_coo;
+
+  private:
     FILE* hdebug_val;
     FILE* hdebug_ene;
     FILE* hdebug_gra;

@@ -11,6 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------
+   Contributing author: Matteo Ricci <matteoeghirotta@gmail.com>
+--------------------------------------------------------------------------- */
+
 #ifdef PAIR_CLASS
 
 PairStyle(coul/long/offcentre,PairCoulLongOffcentre)

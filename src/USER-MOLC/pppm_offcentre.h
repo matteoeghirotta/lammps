@@ -11,6 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
+/* -------------------------------------------------------------------------
+   Contributing author: Matteo Ricci <matteoeghirotta@gmail.com>
+--------------------------------------------------------------------------- */
+
 #ifdef KSPACE_CLASS
 
 KSpaceStyle(pppm/offcentre,PPPMOffcentre)
@@ -51,7 +55,7 @@ class PPPMOffcentre : public KSpace {
   virtual void compute_group_group(int, int, int);
 
   void qsum_qsq();
-  
+
  protected:
   int me,nprocs;
   int nfactors;
@@ -65,7 +69,7 @@ class PPPMOffcentre : public KSpace {
 
   bigint ncharges; // total charges
   double max_charge_offset; // max offcentre charge offset
-  
+
   // support offcentre charges
   class AtomVecEllipsoid *avec;
   int max_nsites;              // maximum number of sites per atom

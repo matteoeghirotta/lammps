@@ -11,6 +11,10 @@
    See the README file in the top-level LAMMPS directory.
 ------------------------------------------------------------------------- */
 
+/* ----------------------------------------------------------------------
+   Contributing author: Matteo Ricci
+   -------------------------------------------------------------------------*/
+
 #include <cstring>
 #include "bond_molc.h"
 #include "atom.h"
@@ -111,7 +115,7 @@ void BondMolc::ev_tally(int i, int j, int nlocal, int newton_bond,
 
 /* ----------------------------------------------------------------------
    tally energy and virial into global and per-atom accumulators
-   also include virial contributions due to angular dependent bond terms  
+   also include virial contributions due to angular dependent bond terms
 ------------------------------------------------------------------------- */
 
 void
@@ -207,7 +211,7 @@ BondMolc::ev_tally_ang(int i, int j, int nlocal, int newton_bond,
     v[3] += delx*dy;
     v[4] += delx*dz;
     v[5] += dely*dz;
-    
+
     // vx2
     gx = fbond_angx2*delx_angx2;
     gy = fbond_angx2*dely_angx2;
@@ -249,7 +253,7 @@ BondMolc::ev_tally_ang(int i, int j, int nlocal, int newton_bond,
     v[3] += delx*dy;
     v[4] += delx*dz;
     v[5] += dely*dz;
-    
+
     if (vflag_global) {
       if (newton_bond) {
         virial[0] += v[0];
