@@ -36,3 +36,7 @@ action bond_molc.h
 action bond_molc.cpp
 action pppm_offcentre.h
 action pppm_offcentre.cpp atom_vec_ellipsoid.h
+action pair_coul_long_offcentre.h
+action pair_coul_long_offcentre.cpp atom_vec_ellipsoid.h
+action pair_coul_cut_offcentre.h
+action pair_coul_cut_offcentre.cpp atom_vec_ellipsoid.h
