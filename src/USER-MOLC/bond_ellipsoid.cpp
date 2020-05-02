@@ -27,6 +27,7 @@
 #include "update.h"
 #include "force.h"
 #include "pair.h"
+#include "citeme.h"
 #include "memory.h"
 #include "error.h"
 #include "atom_vec_ellipsoid.h"
@@ -37,18 +38,19 @@ using namespace LAMMPS_NS;
 
 static const char cite_user_molc_package[] =
     "USER-MOLC package:\n\n"
-"Article{C9CP04120F,\n"
-"  author = {Ricci, Matteo and Roscioni, Otello Maria and Querciagrossa, Lara and Zannoni, Claudio},\n"
-"  title  = {MOLC. A reversible coarse grained approach using anisotropic beads for the modelling of organic functional materials},\n"
-"  journal  = {Phys. Chem. Chem. Phys.},\n"
-"  year  = 2019,\n"
-"  volume = 21,\n"
-"  issue  = 47,\n"
-"  pages  = {26195-26211},\n"
-"  publisher = {The Royal Society of Chemistry},\n"
-"  doi  = {10.1039/C9CP04120F},\n"
-"  url  = {http://dx.doi.org/10.1039/C9CP04120F},\n"
-"  abstract  = {We describe the development and implementation of a coarse grained (CG) modelling approach where complex organic molecules{,} and   particularly the π-conjugated ones often employed in organic electronics{,} are modelled in terms of connected sets of attractive–repulsive   biaxial Gay–Berne ellipsoidal beads. The CG model is aimed at reproducing realistically large scale morphologies (e.g. up to 100 nm thick fil  ms) for the materials involved{,} while being able to generate{,} with a back-mapping procedure{,} atomistic coordinates suitable{,} with lim  ited effort{,} to be applied for charge transport calculations. Detailed methodology and an application to the common hole transporter materi  al α-NPD are provided.}\n\n";
+    "Article{C9CP04120F,\n"
+    "  author = {Ricci, Matteo and Roscioni, Otello Maria and Querciagrossa, Lara and Zannoni, Claudio},\n"
+    "  title  = {MOLC. A reversible coarse grained approach using anisotropic beads for the modelling of organic functional materials},\n"
+    "  journal  = {Phys. Chem. Chem. Phys.},\n"
+    "  year  = 2019,\n"
+    "  volume = 21,\n"
+    "  issue  = 47,\n"
+    "  pages  = {26195-26211},\n"
+    "  publisher = {The Royal Society of Chemistry},\n"
+    "  doi  = {10.1039/C9CP04120F},\n"
+    "  url  = {http://dx.doi.org/10.1039/C9CP04120F},\n"
+    "  abstract  = {We describe the development and implementation of a coarse grained (CG) modelling approach where complex organic molecules, and particularly the \\pi-conjugated ones often employed in organic electronics, are modelled in terms of connected sets of attractive--repulsive biaxial Gay--Berne ellipsoidal beads. The CG model is aimed at reproducing realistically large scale morphologies (e.g. up to 100 nm thick films) for the materials involved, while being able to generate, with a back-mapping procedure, atomistic coordinates suitable, with limited effort, to be applied for charge transport calculations. Detailed methodology and an application to the common hole transporter material \\alpha-NPD are provided.}\n"
+   "}\n\n";
 
 /* ---------------------------------------------------------------------- */
 
