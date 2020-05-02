@@ -339,7 +339,7 @@ namespace LAMMPS_NS {
 	}
 
 	allowed.push_back("poly");
-	allowed.push_back("cosines");
+	allowed.push_back("cos");
 
 	coupler.push_back(new CouplerRRBondPotential);
 	coupler.push_back(new CouplerXXBondPotential);
