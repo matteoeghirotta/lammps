@@ -32,11 +32,13 @@ action bond_ellipsoid.h atom_vec_ellipsoid.h
 action bond_ellipsoid.h molecule.h
 action bond_ellipsoid.cpp atom_vec_ellipsoid.h
 action bond_ellipsoid.cpp molecule.h
-action bond_molc.h
-action bond_molc.cpp
-action pppm_offcentre.h
-action pppm_offcentre.cpp atom_vec_ellipsoid.h
+action pppm_offcentre.h 
+action pppm_offcentre.cpp gridcomm.h
 action pair_coul_long_offcentre.h
 action pair_coul_long_offcentre.cpp atom_vec_ellipsoid.h
 action pair_coul_cut_offcentre.h
 action pair_coul_cut_offcentre.cpp atom_vec_ellipsoid.h
+action fix_temp_berendsen_asphere.h
+action fix_temp_berendsen_asphere.cpp atom_vec_ellipsoid.h
+action bond_molc.h
+action bond_molc.cpp
