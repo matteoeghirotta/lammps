@@ -32,7 +32,7 @@ action bond_ellipsoid.h atom_vec_ellipsoid.h
 action bond_ellipsoid.h molecule.h
 action bond_ellipsoid.cpp atom_vec_ellipsoid.h
 action bond_ellipsoid.cpp molecule.h
-action pppm_offcentre.h 
+action pppm_offcentre.h atom_vec_ellipsoid.h
 action pppm_offcentre.cpp gridcomm.h
 action pair_coul_long_offcentre.h
 action pair_coul_long_offcentre.cpp atom_vec_ellipsoid.h
