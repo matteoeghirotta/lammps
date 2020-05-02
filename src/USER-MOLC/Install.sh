@@ -42,6 +42,13 @@ if (test $1 = 1) then
   fi
 fi
 
+if (test $1 = 1) then
+  if (test ! -e ../molecule.h) then
+    echo "Must install MOLECULE package with USER-MOLC"
+    exit 1
+  fi
+fi
+
 # list of files with dependcies
 
 action bond_ellipsoid.h atom_vec_ellipsoid.h
