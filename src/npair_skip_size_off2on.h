@@ -1,7 +1,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,13 +12,21 @@
 ------------------------------------------------------------------------- */
 
 #ifdef NPAIR_CLASS
-
+// clang-format off
+typedef NPairSkipSizeOff2onTemp<0> NPairSkipSizeOff2on;
 NPairStyle(skip/size/off2on,
            NPairSkipSizeOff2on,
            NP_SKIP | NP_SIZE | NP_OFF2ON | NP_HALF |
-           NP_NSQ | NP_BIN | NP_MULTI |
-           NP_NEWTON | NP_NEWTOFF | NP_ORTHO | NP_TRI)
+           NP_NSQ | NP_BIN | NP_MULTI | NP_MULTI_OLD |
+           NP_NEWTON | NP_NEWTOFF | NP_ORTHO | NP_TRI);
 
+typedef NPairSkipSizeOff2onTemp<1> NPairSkipTrimSizeOff2on;
+NPairStyle(skip/trim/size/off2on,
+           NPairSkipTrimSizeOff2on,
+           NP_SKIP | NP_SIZE | NP_OFF2ON | NP_HALF |
+           NP_NSQ | NP_BIN | NP_MULTI | NP_MULTI_OLD |
+           NP_NEWTON | NP_NEWTOFF | NP_ORTHO | NP_TRI | NP_TRIM);
+// clang-format on
 #else
 
 #ifndef LMP_NPAIR_SKIP_SIZE_OFF2ON_H
@@ -28,22 +36,14 @@ NPairStyle(skip/size/off2on,
 
 namespace LAMMPS_NS {
 
-class NPairSkipSizeOff2on : public NPair {
+template<int TRIM>
+class NPairSkipSizeOff2onTemp : public NPair {
  public:
-  NPairSkipSizeOff2on(class LAMMPS *);
-  ~NPairSkipSizeOff2on() {}
-  void build(class NeighList *);
+  NPairSkipSizeOff2onTemp(class LAMMPS *);
+  void build(class NeighList *) override;
 };
 
-}
+}    // namespace LAMMPS_NS
 
 #endif
 #endif
-
-/* ERROR/WARNING messages:
-
-E: Neighbor list overflow, boost neigh_modify one
-
-UNDOCUMENTED
-
-*/

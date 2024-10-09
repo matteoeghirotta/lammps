@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -16,32 +17,32 @@
 ------------------------------------------------------------------------- */
 
 #include "min_kokkos.h"
-#include <mpi.h>
-#include <cmath>
-#include <cstring>
-#include "atom_kokkos.h"
-#include "atom_vec.h"
-#include "domain.h"
-#include "comm.h"
-#include "update.h"
-#include "modify.h"
-#include "fix_minimize_kokkos.h"
-#include "compute.h"
-#include "neighbor.h"
-#include "force.h"
-#include "pair.h"
-#include "bond.h"
+
 #include "angle.h"
+#include "atom_kokkos.h"
+#include "atom_masks.h"
+#include "atom_vec.h"
+#include "bond.h"
+#include "comm.h"
+#include "compute.h"
 #include "dihedral.h"
+#include "domain.h"
+#include "error.h"
+#include "fix_minimize_kokkos.h"
+#include "force.h"
 #include "improper.h"
+#include "kokkos.h"
 #include "kspace.h"
+#include "modify.h"
+#include "neighbor.h"
 #include "output.h"
+#include "pair.h"
 #include "thermo.h"
 #include "timer.h"
-#include "memory.h"
-#include "error.h"
-#include "kokkos.h"
-#include "atom_masks.h"
+#include "update.h"
+
+#include <cmath>
+#include <cstring>
 
 using namespace LAMMPS_NS;
 
@@ -50,14 +51,7 @@ using namespace LAMMPS_NS;
 MinKokkos::MinKokkos(LAMMPS *lmp) : Min(lmp)
 {
   atomKK = (AtomKokkos *) atom;
-  fix_minimize_kk = NULL;
-}
-
-/* ---------------------------------------------------------------------- */
-
-MinKokkos::~MinKokkos()
-{
-
+  fix_minimize_kk = nullptr;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -65,6 +59,9 @@ MinKokkos::~MinKokkos()
 void MinKokkos::init()
 {
   Min::init();
+
+  if (!fix_minimize->kokkosable)
+    error->all(FLERR,"KOKKOS package requires fix minimize/kk");
 
   fix_minimize_kk = (FixMinimizeKokkos*) fix_minimize;
 }
@@ -76,16 +73,16 @@ void MinKokkos::init()
 void MinKokkos::setup(int flag)
 {
   if (comm->me == 0 && screen) {
-    fprintf(screen,"Setting up %s style minimization ...\n",
-            update->minimize_style);
+    fmt::print(screen,"Setting up {} style minimization ...\n", update->minimize_style);
     if (flag) {
-      fprintf(screen,"  Unit style    : %s\n", update->unit_style);
-      fprintf(screen,"  Current step  : " BIGINT_FORMAT "\n",
-              update->ntimestep);
+      fmt::print(screen,"  Unit style    : {}\n", update->unit_style);
+      fmt::print(screen,"  Current step  : {}\n", update->ntimestep);
       timer->print_timeout(screen);
     }
   }
   update->setupflag = 1;
+
+  lmp->kokkos->auto_sync = 1;
 
   // setup extra global dof due to fixes
   // cannot be done in init() b/c update init() is before modify init()
@@ -93,16 +90,15 @@ void MinKokkos::setup(int flag)
   nextra_global = modify->min_dof();
   if (nextra_global) {
     fextra = new double[nextra_global];
-    if (comm->me == 0 && screen)
-      fprintf(screen,"WARNING: Energy due to %d extra global DOFs will"
-              " be included in minimizer energies\n",nextra_global);
+    if (comm->me == 0)
+      error->warning(FLERR, "Energy due to {} extra global DOFs will"
+                     " be included in minimizer energies\n",nextra_global);
   }
 
   // compute for potential energy
 
-  int id = modify->find_compute("thermo_pe");
-  if (id < 0) error->all(FLERR,"Minimization could not find thermo_pe compute");
-  pe_compute = modify->compute[id];
+  pe_compute = modify->get_compute_by_id("thermo_pe");
+  if (!pe_compute) error->all(FLERR,"Minimization could not find thermo_pe compute");
 
   // style-specific setup does two tasks
   // setup extra global dof vectors
@@ -116,7 +112,7 @@ void MinKokkos::setup(int flag)
 
   bigint ndofme = 3 * static_cast<bigint>(atom->nlocal);
   for (int m = 0; m < nextra_atom; m++)
-    ndofme += extra_peratom[m]*atom->nlocal;
+    ndofme += extra_peratom[m]*static_cast<bigint>(atom->nlocal);
   MPI_Allreduce(&ndofme,&ndoftotal,1,MPI_LMP_BIGINT,MPI_SUM,world);
   ndoftotal += nextra_global;
 
@@ -175,11 +171,10 @@ void MinKokkos::setup(int flag)
     atomKK->sync(force->pair->execution_space,force->pair->datamask_read);
     force->pair->compute(eflag,vflag);
     atomKK->modified(force->pair->execution_space,force->pair->datamask_modify);
-    timer->stamp(Timer::PAIR);
   }
   else if (force->pair) force->pair->compute_dummy(eflag,vflag);
 
-  if (atomKK->molecular) {
+  if (atom->molecular != Atom::ATOMIC) {
     if (force->bond) {
       atomKK->sync(force->bond->execution_space,force->bond->datamask_read);
       force->bond->compute(eflag,vflag);
@@ -200,16 +195,14 @@ void MinKokkos::setup(int flag)
       force->improper->compute(eflag,vflag);
       atomKK->modified(force->improper->execution_space,force->improper->datamask_modify);
     }
-    timer->stamp(Timer::BOND);
   }
 
-  if(force->kspace) {
+  if (force->kspace) {
     force->kspace->setup();
     if (kspace_compute_flag) {
       atomKK->sync(force->kspace->execution_space,force->kspace->datamask_read);
       force->kspace->compute(eflag,vflag);
       atomKK->modified(force->kspace->execution_space,force->kspace->datamask_modify);
-      timer->stamp(Timer::KSPACE);
     } else force->kspace->compute_dummy(eflag,vflag);
   }
 
@@ -236,7 +229,7 @@ void MinKokkos::setup(int flag)
 
   einitial = ecurrent;
   fnorm2_init = sqrt(fnorm_sqr());
-  fnorminf_init = fnorm_inf();
+  fnorminf_init = sqrt(fnorm_inf());
 }
 
 /* ----------------------------------------------------------------------
@@ -252,6 +245,8 @@ void MinKokkos::setup_minimal(int flag)
   // setup domain, communication and neighboring
   // acquire ghosts
   // build neighbor lists
+
+  lmp->kokkos->auto_sync = 1;
 
   if (flag) {
     modify->setup_pre_exchange();
@@ -285,11 +280,10 @@ void MinKokkos::setup_minimal(int flag)
     atomKK->sync(force->pair->execution_space,force->pair->datamask_read);
     force->pair->compute(eflag,vflag);
     atomKK->modified(force->pair->execution_space,force->pair->datamask_modify);
-    timer->stamp(Timer::PAIR);
   }
   else if (force->pair) force->pair->compute_dummy(eflag,vflag);
 
-  if (atomKK->molecular) {
+  if (atom->molecular != Atom::ATOMIC) {
     if (force->bond) {
       atomKK->sync(force->bond->execution_space,force->bond->datamask_read);
       force->bond->compute(eflag,vflag);
@@ -310,16 +304,14 @@ void MinKokkos::setup_minimal(int flag)
       force->improper->compute(eflag,vflag);
       atomKK->modified(force->improper->execution_space,force->improper->datamask_modify);
     }
-    timer->stamp(Timer::BOND);
   }
 
-  if(force->kspace) {
+  if (force->kspace) {
     force->kspace->setup();
     if (kspace_compute_flag) {
       atomKK->sync(force->kspace->execution_space,force->kspace->datamask_read);
       force->kspace->compute(eflag,vflag);
       atomKK->modified(force->kspace->execution_space,force->kspace->datamask_modify);
-      timer->stamp(Timer::KSPACE);
     } else force->kspace->compute_dummy(eflag,vflag);
   }
 
@@ -345,7 +337,7 @@ void MinKokkos::setup_minimal(int flag)
 
   einitial = ecurrent;
   fnorm2_init = sqrt(fnorm_sqr());
-  fnorminf_init = fnorm_inf();
+  fnorminf_init = sqrt(fnorm_inf());
 }
 
 /* ----------------------------------------------------------------------
@@ -354,12 +346,8 @@ void MinKokkos::setup_minimal(int flag)
 
 void MinKokkos::run(int n)
 {
-  if (nextra_global)
-    error->all(FLERR,"Cannot yet use extra global DOFs (e.g. fix box/relax) "
-     "with Kokkos minimize");
-
-  if (nextra_global || nextra_atom)
-    error->all(FLERR,"Cannot yet use extra atom DOFs (e.g. USER-AWPMD and USER-EFF packages) "
+  if (nextra_atom)
+    error->all(FLERR,"Cannot yet use extra atom DOFs (e.g. AWPMD and EFF packages) "
      "with Kokkos minimize");
 
   // minimizer iterations
@@ -373,7 +361,7 @@ void MinKokkos::run(int n)
   // if early exit from iterate loop:
   // set update->nsteps to niter for Finish stats to print
   // set output->next values to this timestep
-  // call energy_force() to insure vflag is set when forces computed
+  // call energy_force() to ensure vflag is set when forces computed
   // output->write does final output for thermo, dump, restart files
   // add ntimestep to all computes that store invocation times
   //   since are hardwiring call to thermo/dumps and computes may not be ready
@@ -474,7 +462,7 @@ double MinKokkos::energy_force(int resetflag)
     timer->stamp(Timer::PAIR);
   }
 
-  if (atom->molecular) {
+  if (atom->molecular != Atom::ATOMIC) {
     if (force->bond) {
       atomKK->sync(force->bond->execution_space,force->bond->datamask_read);
       force->bond->compute(eflag,vflag);
@@ -513,13 +501,21 @@ double MinKokkos::energy_force(int resetflag)
   if (force->newton) {
     comm->reverse_comm();
     timer->stamp(Timer::COMM);
+    atomKK->sync(Device,F_MASK);
   }
+
+  // update per-atom minimization variables stored by pair styles
+
+  if (nextra_atom)
+    for (int m = 0; m < nextra_atom; m++)
+      requestor[m]->min_xf_get(m);
 
   // fixes that affect minimization
 
   if (modify->n_min_post_force) {
      timer->stamp();
      modify->min_post_force(vflag);
+     atomKK->sync(Device,F_MASK);
      timer->stamp(Timer::MODIFY);
   }
 
@@ -540,6 +536,7 @@ double MinKokkos::energy_force(int resetflag)
     if (resetflag) fix_minimize_kk->reset_coords();
     reset_vectors();
   }
+
   return energy;
 }
 
@@ -578,8 +575,15 @@ void MinKokkos::force_clear()
         l_torque(i,2) = 0.0;
       }
     });
+
+    if (extraflag) {
+      size_t nbytes = sizeof(double) * atom->nlocal;
+      if (force->newton) nbytes += sizeof(double) * atom->nghost;
+      atom->avec->force_clear(0,nbytes);
+    }
   }
-  atomKK->modified(Device,F_MASK);
+
+  atomKK->modified(Device,F_MASK|TORQUE_MASK);
 }
 
 /* ----------------------------------------------------------------------
@@ -588,6 +592,7 @@ void MinKokkos::force_clear()
 
 double MinKokkos::fnorm_sqr()
 {
+  atomKK->sync(Device,F_MASK);
 
   double local_norm2_sqr = 0.0;
   {
@@ -603,6 +608,10 @@ double MinKokkos::fnorm_sqr()
   double norm2_sqr = 0.0;
   MPI_Allreduce(&local_norm2_sqr,&norm2_sqr,1,MPI_DOUBLE,MPI_SUM,world);
 
+  if (nextra_global)
+    for (int i = 0; i < nextra_global; i++)
+      norm2_sqr += fextra[i]*fextra[i];
+
   return norm2_sqr;
 }
 
@@ -612,6 +621,7 @@ double MinKokkos::fnorm_sqr()
 
 double MinKokkos::fnorm_inf()
 {
+  atomKK->sync(Device,F_MASK);
 
   double local_norm_inf = 0.0;
   {
@@ -620,12 +630,48 @@ double MinKokkos::fnorm_inf()
     auto l_fvec = fvec;
 
     Kokkos::parallel_reduce(nvec, LAMMPS_LAMBDA(int i, double& local_norm_inf) {
-      local_norm_inf = MAX(fabs(l_fvec[i]),local_norm_inf);
+      local_norm_inf = MAX(l_fvec[i]*l_fvec[i],local_norm_inf);
     },Kokkos::Max<double>(local_norm_inf));
   }
 
   double norm_inf = 0.0;
   MPI_Allreduce(&local_norm_inf,&norm_inf,1,MPI_DOUBLE,MPI_MAX,world);
 
+  if (nextra_global)
+    for (int i = 0; i < nextra_global; i++)
+      norm_inf = MAX(fextra[i]*fextra[i],norm_inf);
+
   return norm_inf;
+}
+
+/* ----------------------------------------------------------------------
+   compute and return ||force||_max (inf norm per-vector)
+------------------------------------------------------------------------- */
+
+double MinKokkos::fnorm_max()
+{
+  atomKK->sync(Device,F_MASK);
+
+  double local_norm_max = 0.0;
+  {
+    // local variables for lambda capture
+
+    auto l_fvec = fvec;
+
+    Kokkos::parallel_reduce(nvec, LAMMPS_LAMBDA(int i, double& local_norm_max) {
+      double fdotf = l_fvec[i]*l_fvec[i]+l_fvec[i+1]*l_fvec[i+1]+l_fvec[i+2]*l_fvec[i+2];
+      local_norm_max = MAX(fdotf,local_norm_max);
+    },Kokkos::Max<double>(local_norm_max));
+  }
+
+  double norm_max = 0.0;
+  MPI_Allreduce(&local_norm_max,&norm_max,1,MPI_DOUBLE,MPI_MAX,world);
+
+  if (nextra_global) {
+    for (int i = 0; i < nextra_global; i+=3) {
+      double fdotf = fextra[i]*fextra[i];
+      norm_max = MAX(fdotf,norm_max);
+    }
+  }
+  return norm_max;
 }

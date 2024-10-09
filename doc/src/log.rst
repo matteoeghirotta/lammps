@@ -6,8 +6,7 @@ log command
 Syntax
 """"""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    log file keyword
 
@@ -17,8 +16,7 @@ Syntax
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    log log.equil
    log log.equil append
@@ -28,7 +26,7 @@ Description
 
 This command closes the current LAMMPS log file, opens a new file with
 the specified name, and begins logging information to it.  If the
-specified file name is *none*\ , then no new log file is opened.  If the
+specified file name is *none*, then no new log file is opened.  If the
 optional keyword *append* is specified, then output will be appended
 to an existing log file, instead of overwriting it.
 
@@ -41,9 +39,14 @@ name of the initial log file can also be set by the :doc:`-log command-line swit
 
 Restrictions
 """"""""""""
- none
 
-**Related commands:** none
+none
+
+Related commands
+""""""""""""""""
+
+none
+
 
 Default
 """""""

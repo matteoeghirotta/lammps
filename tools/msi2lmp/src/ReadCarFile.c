@@ -1,7 +1,7 @@
 /*
-*  This function opens the .car file and extracts coordinate information
-*  into the atoms Atom structure
-*/
+ *  This function opens the .car file and extracts coordinate information
+ *  into the atoms Atom structure
+ */
 
 #include "msi2lmp.h"
 
@@ -127,12 +127,15 @@ void ReadCarFile(void)
 
   /* First pass through file -- Count molecules */
 
-  while(fgets(line,MAX_LINE_LENGTH,CarF) != NULL )
-    if( strncmp(line,"end",3) == 0 )
+  while (fgets(line,MAX_LINE_LENGTH,CarF) != NULL )
+    if (strncmp(line,"end",3) == 0 )
       no_molecules++;
 
   /* Allocate space to keep track of the number of atoms within a molecule */
-
+  if (no_molecules < 1) {
+    fprintf(stderr, "No molecules in system");
+    exit(32);
+  }
   no_atoms = (int *) calloc(no_molecules,sizeof(int));
   if ( no_atoms == NULL ) {
     printf("Could not allocate memory for no_atoms\n");
@@ -227,7 +230,7 @@ void ReadCarFile(void)
   /* Search coordinates to find lowest and highest for x, y, and z */
 
   if (periodic == 0) {
-    /* Added if/else statment STLM Oct 5 2010 */
+    /* Added if/else statement STLM Oct 5 2010 */
     if (TriclinicFlag == 0) {
       /* no need to re-center the box, if we use min/max values */
       center[0] = center[1] = center[2] = 0.0;

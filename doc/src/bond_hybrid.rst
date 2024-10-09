@@ -1,11 +1,13 @@
 .. index:: bond_style hybrid
+.. index:: bond_style hybrid/kk
 
 bond_style hybrid command
 =========================
 
+Accelerator Variants: *hybrid/kk*
+
 Syntax
 """"""
-
 
 .. code-block:: LAMMPS
 
@@ -16,8 +18,7 @@ Syntax
 Examples
 """"""""
 
-
-.. code-block: LAMMPS
+.. code-block:: LAMMPS
 
    bond_style hybrid harmonic fene
    bond_coeff 1 harmonic 80.0 1.2
@@ -34,9 +35,9 @@ be computed with a *harmonic* potential.  The assignment of bond type
 to style is made via the :doc:`bond_coeff <bond_coeff>` command or in
 the data file.
 
-In the bond\_coeff commands, the name of a bond style must be added
+In the bond_coeff commands, the name of a bond style must be added
 after the bond type, with the remaining coefficients being those
-appropriate to that style.  In the example above, the 2 bond\_coeff
+appropriate to that style.  In the example above, the 2 bond_coeff
 commands set bonds of bond type 1 to be computed with a *harmonic*
 potential with coefficients 80.0, 1.2 for :math:`K`, :math:`r_0`.  All other bond types
 (2-N) are computed with a *fene* potential with coefficients 30.0,
@@ -47,7 +48,6 @@ If bond coefficients are specified in the data file read via the
 E.g. "harmonic" or "fene" must be added after the bond type, for each
 line in the "Bond Coeffs" section, e.g.
 
-
 .. parsed-literal::
 
    Bond Coeffs
@@ -57,29 +57,34 @@ line in the "Bond Coeffs" section, e.g.
    ...
 
 A bond style of *none* with no additional coefficients can be used in
-place of a bond style, either in a input script bond\_coeff command or
+place of a bond style, either in a input script bond_coeff command or
 in the data file, if you desire to turn off interactions for specific
 bond types.
 
-
 ----------
 
+.. include:: accel_styles.rst
+
+----------
 
 Restrictions
 """"""""""""
 
-
 This bond style can only be used if LAMMPS was built with the MOLECULE
-package.  See the :doc:`Build package <Build_package>` doc page for more
+package.  See the :doc:`Build package <Build_package>` page for more
 info.
 
 Unlike other bond styles, the hybrid bond style does not store bond
-coefficient info for individual sub-styles in a :doc:`binary restart files <restart>`.  Thus when restarting a simulation from a restart
-file, you need to re-specify bond\_coeff commands.
+coefficient info for individual sub-styles in :doc:`binary restart files
+<restart>` or :doc:`data files <write_data>`.  Thus when restarting a
+simulation, you need to re-specify the bond_coeff commands.
 
 Related commands
 """"""""""""""""
 
 :doc:`bond_coeff <bond_coeff>`, :doc:`delete_bonds <delete_bonds>`
 
-**Default:** none
+Default
+"""""""
+
+none

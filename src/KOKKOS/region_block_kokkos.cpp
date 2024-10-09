@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -17,22 +18,13 @@
 
 using namespace LAMMPS_NS;
 
-#define BIG 1.0e20
-
 /* ---------------------------------------------------------------------- */
 
 template<class DeviceType>
-RegBlockKokkos<DeviceType>::RegBlockKokkos(LAMMPS *lmp, int narg, char **arg) : RegBlock(lmp, narg, arg)
+RegBlockKokkos<DeviceType>::RegBlockKokkos(LAMMPS *lmp, int narg, char **arg)
+  : RegBlock(lmp, narg, arg)
 {
   atomKK = (AtomKokkos*) atom;
-}
-
-/* ---------------------------------------------------------------------- */
-
-template<class DeviceType>
-RegBlockKokkos<DeviceType>::~RegBlockKokkos()
-{
-
 }
 
 /* ----------------------------------------------------------------------
@@ -55,7 +47,8 @@ void RegBlockKokkos<DeviceType>::match_all_kokkos(int groupbit_in, DAT::tdual_in
   groupbit = groupbit_in;
   d_match = k_match_in.template view<DeviceType>();
 
-  atomKK->sync(Device, X_MASK | MASK_MASK);
+  auto execution_space = ExecutionSpaceFromDevice<DeviceType>::space;
+  atomKK->sync(execution_space, X_MASK | MASK_MASK);
 
   x = atomKK->k_x.view<DeviceType>();
   mask = atomKK->k_mask.view<DeviceType>();
@@ -163,7 +156,7 @@ void RegBlockKokkos<DeviceType>::rotate(double &x, double &y, double &z, double 
 
 namespace LAMMPS_NS {
 template class RegBlockKokkos<LMPDeviceType>;
-#ifdef KOKKOS_ENABLE_CUDA
+#ifdef LMP_KOKKOS_GPU
 template class RegBlockKokkos<LMPHostType>;
 #endif
 }

@@ -1,7 +1,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,13 +12,14 @@
 ------------------------------------------------------------------------- */
 
 #ifdef ANGLE_CLASS
-
-AngleStyle(cosine/kk,AngleCosineKokkos<LMPDeviceType>)
-AngleStyle(cosine/kk/device,AngleCosineKokkos<LMPDeviceType>)
-AngleStyle(cosine/kk/host,AngleCosineKokkos<LMPHostType>)
-
+// clang-format off
+AngleStyle(cosine/kk,AngleCosineKokkos<LMPDeviceType>);
+AngleStyle(cosine/kk/device,AngleCosineKokkos<LMPDeviceType>);
+AngleStyle(cosine/kk/host,AngleCosineKokkos<LMPHostType>);
+// clang-format on
 #else
 
+// clang-format off
 #ifndef LMP_ANGLE_COSINE_KOKKOS_H
 #define LMP_ANGLE_COSINE_KOKKOS_H
 
@@ -36,12 +37,13 @@ class AngleCosineKokkos : public AngleCosine {
  public:
   typedef DeviceType device_type;
   typedef EV_FLOAT value_type;
+  typedef ArrayTypes<DeviceType> AT;
 
   AngleCosineKokkos(class LAMMPS *);
-  virtual ~AngleCosineKokkos();
-  void compute(int, int);
-  void coeff(int, char **);
-  void read_restart(FILE *);
+  ~AngleCosineKokkos() override;
+  void compute(int, int) override;
+  void coeff(int, char **) override;
+  void read_restart(FILE *) override;
 
   template<int NEWTON_BOND, int EVFLAG>
   KOKKOS_INLINE_FUNCTION
@@ -58,6 +60,9 @@ class AngleCosineKokkos : public AngleCosine {
                      const F_FLOAT &delx1, const F_FLOAT &dely1, const F_FLOAT &delz1,
                      const F_FLOAT &delx2, const F_FLOAT &dely2, const F_FLOAT &delz2) const;
 
+  typename AT::tdual_efloat_1d k_eatom;
+  typename AT::tdual_virial_array k_vatom;
+
  protected:
 
   class NeighborKokkos *neighborKK;
@@ -65,9 +70,6 @@ class AngleCosineKokkos : public AngleCosine {
   typename ArrayTypes<DeviceType>::t_x_array_randomread x;
   typename ArrayTypes<DeviceType>::t_f_array f;
   typename ArrayTypes<DeviceType>::t_int_2d anglelist;
-
-  typename ArrayTypes<DeviceType>::tdual_efloat_1d k_eatom;
-  typename ArrayTypes<DeviceType>::tdual_virial_array k_vatom;
   typename ArrayTypes<DeviceType>::t_efloat_1d d_eatom;
   typename ArrayTypes<DeviceType>::t_virial_array d_vatom;
 
@@ -77,7 +79,7 @@ class AngleCosineKokkos : public AngleCosine {
   typename ArrayTypes<DeviceType>::tdual_ffloat_1d k_k;
   typename ArrayTypes<DeviceType>::t_ffloat_1d d_k;
 
-  void allocate();
+  void allocate() override;
 };
 
 }
@@ -85,6 +87,3 @@ class AngleCosineKokkos : public AngleCosine {
 #endif
 #endif
 
-/* ERROR/WARNING messages:
-
-*/

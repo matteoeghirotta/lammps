@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -16,18 +17,19 @@
 ------------------------------------------------------------------------- */
 
 #include "fix_recenter.h"
-#include <cmath>
-#include <cstring>
+
 #include "atom.h"
-#include "group.h"
-#include "update.h"
+#include "comm.h"
 #include "domain.h"
+#include "error.h"
+#include "group.h"
 #include "lattice.h"
 #include "modify.h"
-#include "comm.h"
 #include "respa.h"
-#include "error.h"
-#include "force.h"
+#include "update.h"
+
+#include <cmath>
+#include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -56,13 +58,13 @@ FixRecenter::FixRecenter(LAMMPS *lmp, int narg, char **arg) :
 
   if (strcmp(arg[3],"NULL") == 0) xflag = 0;
   else if (strcmp(arg[3],"INIT") == 0) xinitflag = 1;
-  else xcom = force->numeric(FLERR,arg[3]);
+  else xcom = utils::numeric(FLERR,arg[3],false,lmp);
   if (strcmp(arg[4],"NULL") == 0) yflag = 0;
   else if (strcmp(arg[4],"INIT") == 0) yinitflag = 1;
-  else ycom = force->numeric(FLERR,arg[4]);
+  else ycom = utils::numeric(FLERR,arg[4],false,lmp);
   if (strcmp(arg[5],"NULL") == 0) zflag = 0;
   else if (strcmp(arg[5],"INIT") == 0) zinitflag = 1;
-  else zcom = force->numeric(FLERR,arg[5]);
+  else zcom = utils::numeric(FLERR,arg[5],false,lmp);
 
   // optional args
 
@@ -123,13 +125,12 @@ void FixRecenter::init()
 
   int after = 0;
   int flag = 0;
-  for (int i = 0; i < modify->nfix; i++) {
-    if (strcmp(id,modify->fix[i]->id) == 0) after = 1;
-    else if ((modify->fmask[i] & INITIAL_INTEGRATE) && after) flag = 1;
+  for (const auto &ifix : modify->get_fix_list()) {
+    if (strcmp(id, ifix->id) == 0) after = 1;
+    else if ((modify->get_fix_mask(ifix) & INITIAL_INTEGRATE) && after) flag = 1;
   }
   if (flag && comm->me == 0)
-    error->warning(FLERR,"Fix recenter should come after all other "
-                   "integration fixes");
+    error->warning(FLERR,"Fix recenter should come after all other integration fixes");
 
   masstotal = group->mass(igroup);
 
@@ -143,8 +144,8 @@ void FixRecenter::init()
     zinit = xcm[2];
   }
 
-  if (strstr(update->integrate_style,"respa"))
-    nlevels_respa = ((Respa *) update->integrate)->nlevels;
+  if (utils::strmatch(update->integrate_style,"^respa"))
+    nlevels_respa = (dynamic_cast<Respa *>(update->integrate))->nlevels;
 }
 
 /* ---------------------------------------------------------------------- */

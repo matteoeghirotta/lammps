@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,38 +13,36 @@
 ------------------------------------------------------------------------- */
 
 #include "write_data.h"
-#include <mpi.h>
-#include <cstring>
+
+#include "angle.h"
 #include "atom.h"
 #include "atom_vec.h"
-#include "force.h"
-#include "pair.h"
 #include "bond.h"
-#include "angle.h"
-#include "dihedral.h"
-#include "improper.h"
-#include "update.h"
-#include "modify.h"
-#include "fix.h"
-#include "domain.h"
-#include "universe.h"
 #include "comm.h"
-#include "output.h"
-#include "thermo.h"
-#include "memory.h"
+#include "dihedral.h"
+#include "domain.h"
 #include "error.h"
+#include "fix.h"
+#include "force.h"
+#include "improper.h"
+#include "label_map.h"
+#include "memory.h"
+#include "modify.h"
+#include "output.h"
+#include "pair.h"
+#include "thermo.h"
+#include "update.h"
+
+#include <cstring>
 
 using namespace LAMMPS_NS;
 
 enum{II,IJ};
+enum{ELLIPSOID,LINE,TRIANGLE,BODY};   // also in AtomVecHybrid
 
 /* ---------------------------------------------------------------------- */
 
-WriteData::WriteData(LAMMPS *lmp) : Pointers(lmp)
-{
-  MPI_Comm_rank(world,&me);
-  MPI_Comm_size(world,&nprocs);
-}
+WriteData::WriteData(LAMMPS *lmp) : Command(lmp) {}
 
 /* ----------------------------------------------------------------------
    called as write_data command in input script
@@ -54,18 +53,14 @@ void WriteData::command(int narg, char **arg)
   if (domain->box_exist == 0)
     error->all(FLERR,"Write_data command before simulation box is defined");
 
-  if (narg < 1) error->all(FLERR,"Illegal write_data command");
+  if (narg < 1) utils::missing_cmd_args(FLERR, "write_data", error);
 
   // if filename contains a "*", replace with current timestep
 
-  char *ptr;
-  int n = strlen(arg[0]) + 16;
-  char *file = new char[n];
-
-  if ((ptr = strchr(arg[0],'*'))) {
-    *ptr = '\0';
-    sprintf(file,"%s" BIGINT_FORMAT "%s",arg[0],update->ntimestep,ptr+1);
-  } else strcpy(file,arg[0]);
+  std::string file = arg[0];
+  std::size_t found = file.find('*');
+  if (found != std::string::npos)
+    file.replace(found,1,fmt::format("{}",update->ntimestep));
 
   // read optional args
   // noinit is a hidden arg, only used by -r command-line switch
@@ -73,18 +68,25 @@ void WriteData::command(int narg, char **arg)
   pairflag = II;
   coeffflag = 1;
   fixflag = 1;
-  int noinit = 0;
+  triclinic_general = 0;
+  lmapflag = 1;
+  noinitflag = 0;
+
+  // store current (default) setting since we may change it
+
+  int domain_triclinic_general = domain->triclinic_general;
+  int types_style = atom->types_style;
 
   int iarg = 1;
   while (iarg < narg) {
     if (strcmp(arg[iarg],"pair") == 0) {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal write_data command");
+      if (iarg+2 > narg) utils::missing_cmd_args(FLERR, "write_data pair", error);
       if (strcmp(arg[iarg+1],"ii") == 0) pairflag = II;
       else if (strcmp(arg[iarg+1],"ij") == 0) pairflag = IJ;
-      else error->all(FLERR,"Illegal write_data command");
+      else error->all(FLERR,"Unknown write_data pair option: {}", arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"noinit") == 0) {
-      noinit = 1;
+      noinitflag = 1;
       iarg++;
     } else if (strcmp(arg[iarg],"nocoeff") == 0) {
       coeffflag = 0;
@@ -92,8 +94,28 @@ void WriteData::command(int narg, char **arg)
     } else if (strcmp(arg[iarg],"nofix") == 0) {
       fixflag = 0;
       iarg++;
-    } else error->all(FLERR,"Illegal write_data command");
+    } else if (strcmp(arg[iarg],"triclinic/general") == 0) {
+      triclinic_general = 1;
+      iarg++;
+    } else if (strcmp(arg[iarg],"nolabelmap") == 0) {
+      lmapflag = 0;
+      iarg++;
+    } else if (strcmp(arg[iarg],"types") == 0) {
+      if (iarg+2 > narg) utils::missing_cmd_args(FLERR, "write_data types", error);
+      if (strcmp(arg[iarg+1],"numeric") == 0) atom->types_style = Atom::NUMERIC;
+      else if (strcmp(arg[iarg+1],"labels") == 0) atom->types_style = Atom::LABELS;
+      else error->all(FLERR,"Unknown write_data types option: {}", arg[iarg+1]);
+      iarg += 2;
+    } else error->all(FLERR,"Unknown write_data keyword: {}", arg[iarg]);
   }
+
+  // temporarily disable domain->triclinic_general if output not requested
+
+  if (triclinic_general && !domain->triclinic_general)
+    error->all(FLERR,"Write_data triclinic/general for system "
+               "that is not general triclinic");
+  if (!triclinic_general && domain->triclinic_general)
+    domain->triclinic_general = 0;
 
   // init entire system since comm->exchange is done
   // comm::init needs neighbor::init needs pair::init needs kspace::init, etc
@@ -104,9 +126,8 @@ void WriteData::command(int narg, char **arg)
   //     pair->init() can fail due to various unset values:
   //     e.g. pair hybrid coeffs, dpd ghost-atom velocity setting
 
-  if (noinit == 0) {
-    if (comm->me == 0 && screen)
-      fprintf(screen,"System init for write_data ...\n");
+  if (noinitflag == 0) {
+    if (comm->me == 0) utils::logmesg(lmp,"System init for write_data ...\n");
     lmp->init();
 
     // move atoms to new processors before writing file
@@ -126,7 +147,10 @@ void WriteData::command(int narg, char **arg)
 
   write(file);
 
-  delete [] file;
+  // restore saved settings
+
+  domain->triclinic_general = domain_triclinic_general;
+  atom->types_style = types_style;
 }
 
 /* ----------------------------------------------------------------------
@@ -134,7 +158,7 @@ void WriteData::command(int narg, char **arg)
    might later let it be directly called within run/minimize loop
 ------------------------------------------------------------------------- */
 
-void WriteData::write(char *file)
+void WriteData::write(const std::string &file)
 {
   // special case where reneighboring is not done in integrator
   //   on timestep data file is written (due to build_once being set)
@@ -157,76 +181,91 @@ void WriteData::write(char *file)
   // sum up bond,angle,dihedral,improper counts
   // may be different than atom->nbonds,nangles, etc. if broken/turned-off
 
-  if (atom->molecular == 1 && (atom->nbonds || atom->nbondtypes)) {
-    nbonds_local = atom->avec->pack_bond(NULL);
+  if (atom->molecular == Atom::MOLECULAR && (atom->nbonds || atom->nbondtypes)) {
+    nbonds_local = atom->avec->pack_bond(nullptr);
     MPI_Allreduce(&nbonds_local,&nbonds,1,MPI_LMP_BIGINT,MPI_SUM,world);
   }
-  if (atom->molecular == 1 && (atom->nangles || atom->nangletypes)) {
-    nangles_local = atom->avec->pack_angle(NULL);
+  if (atom->molecular == Atom::MOLECULAR && (atom->nangles || atom->nangletypes)) {
+    nangles_local = atom->avec->pack_angle(nullptr);
     MPI_Allreduce(&nangles_local,&nangles,1,MPI_LMP_BIGINT,MPI_SUM,world);
   }
 
-  if (atom->molecular == 1 && (atom->ndihedrals || atom->ndihedraltypes)) {
-    ndihedrals_local = atom->avec->pack_dihedral(NULL);
+  if (atom->molecular == Atom::MOLECULAR && (atom->ndihedrals || atom->ndihedraltypes)) {
+    ndihedrals_local = atom->avec->pack_dihedral(nullptr);
     MPI_Allreduce(&ndihedrals_local,&ndihedrals,1,MPI_LMP_BIGINT,MPI_SUM,world);
   }
 
-  if (atom->molecular == 1 && (atom->nimpropers || atom->nimpropertypes)) {
-    nimpropers_local = atom->avec->pack_improper(NULL);
+  if (atom->molecular == Atom::MOLECULAR && (atom->nimpropers || atom->nimpropertypes)) {
+    nimpropers_local = atom->avec->pack_improper(nullptr);
     MPI_Allreduce(&nimpropers_local,&nimpropers,1,MPI_LMP_BIGINT,MPI_SUM,world);
-  }
-
-  // check for bonus data.
-  if (me == 0) {
-    if ((atom->nellipsoids > 0)
-        || (atom->nlines > 0)
-        || (atom->ntris > 0)
-        || (atom->nbodies > 0))
-      error->warning(FLERR,"System has ellipsoids, lines, triangles, or bodies. "
-                     "Those are not yet supported by write_data. The data file "
-                     "will thus be incomplete.");
   }
 
   // open data file
 
-  if (me == 0) {
-    fp = fopen(file,"w");
-    if (fp == NULL) {
-      char str[128];
-      snprintf(str,128,"Cannot open data file %s",file);
-      error->one(FLERR,str);
-    }
+  if (comm->me == 0) {
+    fp = fopen(file.c_str(),"w");
+    if (fp == nullptr)
+      error->one(FLERR,"Cannot open data file {}: {}", file, utils::getsyserror());
   }
 
   // proc 0 writes header, ntype-length arrays, force fields
+  // label map must come before coeffs
 
-  if (me == 0) {
+  if (comm->me == 0) {
     header();
+    if (lmapflag && atom->labelmapflag) atom->lmap->write_data(fp);
     type_arrays();
     if (coeffflag) force_fields();
   }
 
-  // per atom info
-  // do not write molecular topology for atom_style template
+  // if general triclinic output:
+  // reset internal per-atom data that needs rotation
+
+  if (domain->triclinic_general) atom->avec->write_data_restricted_to_general();
+
+  // per atom info in Atoms and Velocities sections
+  // must not write velocities without tags since we cannot read them back
 
   if (natoms) atoms();
-  if (natoms) velocities();
-  if (atom->molecular == 1) {
+  if (atom->tag_enable) {
+    if (natoms) velocities();
+  } else {
+    if (comm->me == 0)
+      error->warning(FLERR, "Not writing Velocities section of data file without atom IDs");
+  }
+
+  // molecular topology info if defined
+  // do not write molecular topology for atom_style template
+
+  if (atom->molecular == Atom::MOLECULAR) {
     if (atom->nbonds && nbonds) bonds();
     if (atom->nangles && nangles) angles();
     if (atom->ndihedrals) dihedrals();
     if (atom->nimpropers) impropers();
   }
 
+  // bonus info if defined
+
+  if (natoms && atom->ellipsoid_flag) bonus(ELLIPSOID);
+  if (natoms && atom->line_flag) bonus(LINE);
+  if (natoms && atom->tri_flag) bonus(TRIANGLE);
+  if (natoms && atom->body_flag) bonus(BODY);
+
   // extra sections managed by fixes
+
   if (fixflag)
-    for (int i = 0; i < modify->nfix; i++)
-      if (modify->fix[i]->wd_section)
-        for (int m = 0; m < modify->fix[i]->wd_section; m++) fix(i,m);
+    for (auto &ifix : modify->get_fix_list())
+      if (ifix->wd_section)
+        for (int m = 0; m < ifix->wd_section; m++) fix(ifix,m);
+
+  // if general triclinic output:
+  // restore internal per-atom data that was rotated
+
+  if (domain->triclinic_general) atom->avec->write_data_restore_restricted();
 
   // close data file
 
-  if (me == 0) fclose(fp);
+  if (comm->me == 0) fclose(fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -235,51 +274,68 @@ void WriteData::write(char *file)
 
 void WriteData::header()
 {
-  fprintf(fp,"LAMMPS data file via write_data, version %s, "
-          "timestep = " BIGINT_FORMAT "\n",
-          universe->version,update->ntimestep);
+  fmt::print(fp,"LAMMPS data file via write_data, version {}, timestep = {}, units = {}\n\n",
+             lmp->version, update->ntimestep, update->unit_style);
 
-  fprintf(fp,"\n");
+  fmt::print(fp,"{} atoms\n{} atom types\n",atom->natoms,atom->ntypes);
 
-  fprintf(fp,BIGINT_FORMAT " atoms\n",atom->natoms);
-  fprintf(fp,"%d atom types\n",atom->ntypes);
+  // only write out number of types for atom style template
 
-  // do not write molecular topology info for atom_style template
-
-  if (atom->molecular == 1) {
-    if (atom->nbonds || atom->nbondtypes) {
-      fprintf(fp,BIGINT_FORMAT " bonds\n",nbonds);
-      fprintf(fp,"%d bond types\n",atom->nbondtypes);
-    }
-    if (atom->nangles || atom->nangletypes) {
-      fprintf(fp,BIGINT_FORMAT " angles\n",nangles);
-      fprintf(fp,"%d angle types\n",atom->nangletypes);
-    }
-    if (atom->ndihedrals || atom->ndihedraltypes) {
-      fprintf(fp,BIGINT_FORMAT " dihedrals\n",ndihedrals);
-      fprintf(fp,"%d dihedral types\n",atom->ndihedraltypes);
-    }
-    if (atom->nimpropers || atom->nimpropertypes) {
-      fprintf(fp,BIGINT_FORMAT " impropers\n",nimpropers);
-      fprintf(fp,"%d improper types\n",atom->nimpropertypes);
-    }
+  if (atom->molecular == Atom::MOLECULAR) {
+    if (atom->nbonds || atom->nbondtypes)
+      fmt::print(fp,"{} bonds\n{} bond types\n",
+                 nbonds,atom->nbondtypes);
+    if (atom->nangles || atom->nangletypes)
+      fmt::print(fp,"{} angles\n{} angle types\n",
+                 nangles,atom->nangletypes);
+    if (atom->ndihedrals || atom->ndihedraltypes)
+      fmt::print(fp,"{} dihedrals\n{} dihedral types\n",
+                 ndihedrals,atom->ndihedraltypes);
+    if (atom->nimpropers || atom->nimpropertypes)
+      fmt::print(fp,"{} impropers\n{} improper types\n",
+                 nimpropers,atom->nimpropertypes);
   }
 
+  if (atom->molecular == Atom::TEMPLATE) {
+    if (atom->nbondtypes) fmt::print(fp,"{} bond types\n",atom->nbondtypes);
+    if (atom->nangletypes) fmt::print(fp,"{} angle types\n",atom->nangletypes);
+    if (atom->ndihedraltypes) fmt::print(fp,"{} dihedral types\n",atom->ndihedraltypes);
+    if (atom->nimpropertypes) fmt::print(fp,"{} improper types\n",atom->nimpropertypes);
+  }
+
+  // bonus info
+
+  if (atom->ellipsoid_flag) fmt::print(fp,"{} ellipsoids\n",atom->nellipsoids);
+  if (atom->line_flag) fmt::print(fp,"{} lines\n",atom->nlines);
+  if (atom->tri_flag) fmt::print(fp,"{} triangles\n",atom->ntris);
+  if (atom->body_flag) fmt::print(fp,"{} bodies\n",atom->nbodies);
+
+  // fix info
+
   if (fixflag)
-    for (int i = 0; i < modify->nfix; i++)
-      if (modify->fix[i]->wd_header)
-        for (int m = 0; m < modify->fix[i]->wd_header; m++)
-          modify->fix[i]->write_data_header(fp,m);
+    for (auto &ifix : modify->get_fix_list())
+      if (ifix->wd_header)
+        for (int m = 0; m < ifix->wd_header; m++)
+          ifix->write_data_header(fp,m);
 
-  fprintf(fp,"\n");
+  // box info: orthogonal, restricted triclinic, or general triclinic (if requested)
 
-  fprintf(fp,"%-1.16e %-1.16e xlo xhi\n",domain->boxlo[0],domain->boxhi[0]);
-  fprintf(fp,"%-1.16e %-1.16e ylo yhi\n",domain->boxlo[1],domain->boxhi[1]);
-  fprintf(fp,"%-1.16e %-1.16e zlo zhi\n",domain->boxlo[2],domain->boxhi[2]);
+  if (!domain->triclinic_general) {
+    fmt::print(fp,"\n{} {} xlo xhi\n{} {} ylo yhi\n{} {} zlo zhi\n",
+               domain->boxlo[0],domain->boxhi[0],
+               domain->boxlo[1],domain->boxhi[1],
+               domain->boxlo[2],domain->boxhi[2]);
+    if (domain->triclinic)
+      fmt::print(fp,"{} {} {} xy xz yz\n",domain->xy,domain->xz,domain->yz);
 
-  if (domain->triclinic)
-    fprintf(fp,"%-1.16e %-1.16e %-1.16e xy xz yz\n",
-            domain->xy,domain->xz,domain->yz);
+  } else if (domain->triclinic_general) {
+    fmt::print(fp,"\n{} {} {} avec\n{} {} {} bvec\n{} {} {} cvec\n",
+               domain->avec[0],domain->avec[1],domain->avec[2],
+               domain->bvec[0],domain->bvec[1],domain->bvec[2],
+               domain->cvec[0],domain->cvec[1],domain->cvec[2]);
+    fmt::print(fp,"{} {} {} abc origin\n",
+               domain->boxlo[0],domain->boxlo[1],domain->boxlo[2]);
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -290,8 +346,9 @@ void WriteData::type_arrays()
 {
   if (atom->mass) {
     double *mass = atom->mass;
-    fprintf(fp,"\nMasses\n\n");
-    for (int i = 1; i <= atom->ntypes; i++) fprintf(fp,"%d %g\n",i,mass[i]);
+    fputs("\nMasses\n\n",fp);
+    for (int i = 1; i <= atom->ntypes; i++)
+      fmt::print(fp,"{} {:.16g}\n",i,mass[i]);
   }
 }
 
@@ -303,27 +360,39 @@ void WriteData::force_fields()
 {
   if (force->pair && force->pair->writedata) {
     if (pairflag == II) {
-      fprintf(fp,"\nPair Coeffs # %s\n\n", force->pair_style);
+      if ((comm->me == 0) && (force->pair->mixed_flag == 0))
+        error->warning(FLERR,"Not all mixed pair coeffs generated from mixing. "
+                       "Use write_data with 'pair ij' option to store all pair coeffs.");
+      fmt::print(fp,"\nPair Coeffs # {}\n\n", force->pair_style);
       force->pair->write_data(fp);
     } else if (pairflag == IJ) {
-      fprintf(fp,"\nPairIJ Coeffs # %s\n\n", force->pair_style);
+      // try computing mixed pair coeffs in case we skipped lmp->init()
+      // this block of code is currently only accessed from LAMMPS-GUI's restart inspector
+      if (force->pair->allocated && noinitflag) {
+        if (comm->me == 0) error->warning(FLERR,"Computing missing pair coeffs from mixing");
+        for (int i=1; i < atom->ntypes; ++i)
+          for (int j=i; j <=atom->ntypes; ++j)
+            if (!force->pair->setflag[i][j])
+              force->pair->init_one(i, j);
+      }
+      fmt::print(fp,"\nPairIJ Coeffs # {}\n\n", force->pair_style);
       force->pair->write_data_all(fp);
     }
   }
   if (force->bond && force->bond->writedata && atom->nbondtypes) {
-    fprintf(fp,"\nBond Coeffs # %s\n\n", force->bond_style);
+    fmt::print(fp,"\nBond Coeffs # {}\n\n", force->bond_style);
     force->bond->write_data(fp);
   }
   if (force->angle && force->angle->writedata && atom->nangletypes) {
-    fprintf(fp,"\nAngle Coeffs # %s\n\n", force->angle_style);
+    fmt::print(fp,"\nAngle Coeffs # {}\n\n", force->angle_style);
     force->angle->write_data(fp);
   }
   if (force->dihedral && force->dihedral->writedata && atom->ndihedraltypes) {
-    fprintf(fp,"\nDihedral Coeffs # %s\n\n", force->dihedral_style);
+    fmt::print(fp,"\nDihedral Coeffs # {}\n\n", force->dihedral_style);
     force->dihedral->write_data(fp);
   }
   if (force->improper && force->improper->writedata && atom->nimpropertypes) {
-    fprintf(fp,"\nImproper Coeffs # %s\n\n", force->improper_style);
+    fmt::print(fp,"\nImproper Coeffs # {}\n\n", force->improper_style);
     force->improper->write_data(fp);
   }
 }
@@ -335,16 +404,15 @@ void WriteData::force_fields()
 void WriteData::atoms()
 {
   // communication buffer for all my Atom info
-  // max_size = largest buffer needed by any proc
+  // maxrow X ncol = largest buffer needed by any proc
 
   int ncol = atom->avec->size_data_atom + 3;
-
   int sendrow = atom->nlocal;
   int maxrow;
   MPI_Allreduce(&sendrow,&maxrow,1,MPI_INT,MPI_MAX,world);
 
   double **buf;
-  if (me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
+  if (comm->me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
   else memory->create(buf,MAX(1,sendrow),ncol,"write_data:buf");
 
   // pack my atom data into buf
@@ -357,12 +425,12 @@ void WriteData::atoms()
 
   int tmp,recvrow;
 
-  if (me == 0) {
+  if (comm->me == 0) {
     MPI_Status status;
     MPI_Request request;
 
-    fprintf(fp,"\nAtoms # %s\n\n",atom->atom_style);
-    for (int iproc = 0; iproc < nprocs; iproc++) {
+    fmt::print(fp,"\nAtoms # {}\n\n",atom->atom_style);
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
       if (iproc) {
         MPI_Irecv(&buf[0][0],maxrow*ncol,MPI_DOUBLE,iproc,0,world,&request);
         MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
@@ -389,16 +457,15 @@ void WriteData::atoms()
 void WriteData::velocities()
 {
   // communication buffer for all my Atom info
-  // max_size = largest buffer needed by any proc
+  // maxrow X ncol = largest buffer needed by any proc
 
   int ncol = atom->avec->size_velocity + 1;
-
   int sendrow = atom->nlocal;
   int maxrow;
   MPI_Allreduce(&sendrow,&maxrow,1,MPI_INT,MPI_MAX,world);
 
   double **buf;
-  if (me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
+  if (comm->me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
   else memory->create(buf,MAX(1,sendrow),ncol,"write_data:buf");
 
   // pack my velocity data into buf
@@ -411,12 +478,12 @@ void WriteData::velocities()
 
   int tmp,recvrow;
 
-  if (me == 0) {
+  if (comm->me == 0) {
     MPI_Status status;
     MPI_Request request;
 
-    fprintf(fp,"\nVelocities\n\n");
-    for (int iproc = 0; iproc < nprocs; iproc++) {
+    fputs("\nVelocities\n\n",fp);
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
       if (iproc) {
         MPI_Irecv(&buf[0][0],maxrow*ncol,MPI_DOUBLE,iproc,0,world,&request);
         MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
@@ -443,6 +510,7 @@ void WriteData::velocities()
 void WriteData::bonds()
 {
   // communication buffer for all my Bond info
+  // maxrow X ncol = largest buffer needed by any proc
 
   int ncol = 3;
   int sendrow = static_cast<int> (nbonds_local);
@@ -450,7 +518,7 @@ void WriteData::bonds()
   MPI_Allreduce(&sendrow,&maxrow,1,MPI_INT,MPI_MAX,world);
 
   tagint **buf;
-  if (me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
+  if (comm->me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
   else memory->create(buf,MAX(1,sendrow),ncol,"write_data:buf");
 
   // pack my bond data into buf
@@ -464,12 +532,12 @@ void WriteData::bonds()
   int tmp,recvrow;
 
   int index = 1;
-  if (me == 0) {
+  if (comm->me == 0) {
     MPI_Status status;
     MPI_Request request;
 
-    fprintf(fp,"\nBonds\n\n");
-    for (int iproc = 0; iproc < nprocs; iproc++) {
+    fputs("\nBonds\n\n",fp);
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
       if (iproc) {
         MPI_Irecv(&buf[0][0],maxrow*ncol,MPI_LMP_TAGINT,iproc,0,world,&request);
         MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
@@ -497,6 +565,7 @@ void WriteData::bonds()
 void WriteData::angles()
 {
   // communication buffer for all my Angle info
+  // maxrow X ncol = largest buffer needed by any proc
 
   int ncol = 4;
   int sendrow = static_cast<int> (nangles_local);
@@ -504,7 +573,7 @@ void WriteData::angles()
   MPI_Allreduce(&sendrow,&maxrow,1,MPI_INT,MPI_MAX,world);
 
   tagint **buf;
-  if (me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
+  if (comm->me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
   else memory->create(buf,MAX(1,sendrow),ncol,"write_data:buf");
 
   // pack my angle data into buf
@@ -518,12 +587,12 @@ void WriteData::angles()
   int tmp,recvrow;
 
   int index = 1;
-  if (me == 0) {
+  if (comm->me == 0) {
     MPI_Status status;
     MPI_Request request;
 
-    fprintf(fp,"\nAngles\n\n");
-    for (int iproc = 0; iproc < nprocs; iproc++) {
+    fputs("\nAngles\n\n",fp);
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
       if (iproc) {
         MPI_Irecv(&buf[0][0],maxrow*ncol,MPI_LMP_TAGINT,iproc,0,world,&request);
         MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
@@ -551,32 +620,15 @@ void WriteData::angles()
 void WriteData::dihedrals()
 {
   // communication buffer for all my Dihedral info
-  // max_size = largest buffer needed by any proc
+  // maxrow X ncol = largest buffer needed by any proc
 
   int ncol = 5;
-
-  tagint *tag = atom->tag;
-  int *num_dihedral = atom->num_dihedral;
-  tagint **dihedral_atom2 = atom->dihedral_atom2;
-  int nlocal = atom->nlocal;
-  int newton_bond = force->newton_bond;
-
-  int i,j;
-  int sendrow = 0;
-  if (newton_bond) {
-    for (i = 0; i < nlocal; i++)
-      sendrow += num_dihedral[i];
-  } else {
-    for (i = 0; i < nlocal; i++)
-      for (j = 0; j < num_dihedral[i]; j++)
-        if (tag[i] == dihedral_atom2[i][j]) sendrow++;
-  }
-
+  int sendrow = static_cast<int> (ndihedrals_local);
   int maxrow;
   MPI_Allreduce(&sendrow,&maxrow,1,MPI_INT,MPI_MAX,world);
 
   tagint **buf;
-  if (me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
+  if (comm->me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
   else memory->create(buf,MAX(1,sendrow),ncol,"write_data:buf");
 
   // pack my dihedral data into buf
@@ -590,12 +642,12 @@ void WriteData::dihedrals()
   int tmp,recvrow;
 
   int index = 1;
-  if (me == 0) {
+  if (comm->me == 0) {
     MPI_Status status;
     MPI_Request request;
 
-    fprintf(fp,"\nDihedrals\n\n");
-    for (int iproc = 0; iproc < nprocs; iproc++) {
+    fputs("\nDihedrals\n\n",fp);
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
       if (iproc) {
         MPI_Irecv(&buf[0][0],maxrow*ncol,MPI_LMP_TAGINT,iproc,0,world,&request);
         MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
@@ -623,32 +675,15 @@ void WriteData::dihedrals()
 void WriteData::impropers()
 {
   // communication buffer for all my Improper info
-  // max_size = largest buffer needed by any proc
+  // maxrow X ncol = largest buffer needed by any proc
 
   int ncol = 5;
-
-  tagint *tag = atom->tag;
-  int *num_improper = atom->num_improper;
-  tagint **improper_atom2 = atom->improper_atom2;
-  int nlocal = atom->nlocal;
-  int newton_bond = force->newton_bond;
-
-  int i,j;
-  int sendrow = 0;
-  if (newton_bond) {
-    for (i = 0; i < nlocal; i++)
-      sendrow += num_improper[i];
-  } else {
-    for (i = 0; i < nlocal; i++)
-      for (j = 0; j < num_improper[i]; j++)
-        if (tag[i] == improper_atom2[i][j]) sendrow++;
-  }
-
+  int sendrow = static_cast<int> (nimpropers_local);
   int maxrow;
   MPI_Allreduce(&sendrow,&maxrow,1,MPI_INT,MPI_MAX,world);
 
   tagint **buf;
-  if (me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
+  if (comm->me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
   else memory->create(buf,MAX(1,sendrow),ncol,"write_data:buf");
 
   // pack my improper data into buf
@@ -662,12 +697,12 @@ void WriteData::impropers()
   int tmp,recvrow;
 
   int index = 1;
-  if (me == 0) {
+  if (comm->me == 0) {
     MPI_Status status;
     MPI_Request request;
 
-    fprintf(fp,"\nImpropers\n\n");
-    for (int iproc = 0; iproc < nprocs; iproc++) {
+    fputs("\nImpropers\n\n",fp);
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
       if (iproc) {
         MPI_Irecv(&buf[0][0],maxrow*ncol,MPI_LMP_TAGINT,iproc,0,world,&request);
         MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
@@ -689,25 +724,82 @@ void WriteData::impropers()
 }
 
 /* ----------------------------------------------------------------------
+   write out Bonus sections of data file
+   flag indicates which bonus section it is
+------------------------------------------------------------------------- */
+
+void WriteData::bonus(int flag)
+{
+  // communication buffer for all my Bonus info
+  // maxvalues = largest buffer needed by any proc
+
+  int nvalues = atom->avec->pack_data_bonus(nullptr,flag);
+  int maxvalues;
+  MPI_Allreduce(&nvalues,&maxvalues,1,MPI_INT,MPI_MAX,world);
+
+  double *buf = nullptr;
+  if (comm->me == 0) memory->create(buf,MAX(1,maxvalues),"write_data:buf");
+  else memory->create(buf,MAX(1,nvalues),"write_data:buf");
+
+  // pack my bonus data into buf
+
+  atom->avec->pack_data_bonus(buf,flag);
+
+  // write one chunk of info per proc to file
+  // proc 0 pings each proc, receives its chunk, writes to file
+  // all other procs wait for ping, send their chunk to proc 0
+
+  int tmp;
+
+  if (comm->me == 0) {
+    MPI_Status status;
+    MPI_Request request;
+
+    if (flag == ELLIPSOID) fputs("\nEllipsoids\n\n",fp);
+    if (flag == LINE)      fputs("\nLines\n\n",fp);
+    if (flag == TRIANGLE)  fputs("\nTriangles\n\n",fp);
+    if (flag == BODY)      fputs("\nBodies\n\n",fp);
+
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
+      if (iproc) {
+        MPI_Irecv(buf,maxvalues,MPI_DOUBLE,iproc,0,world,&request);
+        MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
+        MPI_Wait(&request,&status);
+        MPI_Get_count(&status,MPI_DOUBLE,&nvalues);
+      }
+
+      atom->avec->write_data_bonus(fp,nvalues,buf,flag);
+    }
+
+  } else {
+    MPI_Recv(&tmp,0,MPI_INT,0,0,world,MPI_STATUS_IGNORE);
+    MPI_Rsend(buf,nvalues,MPI_DOUBLE,0,0,world);
+  }
+
+  memory->destroy(buf);
+}
+
+/* ----------------------------------------------------------------------
    write out Mth section of data file owned by Fix ifix
 ------------------------------------------------------------------------- */
 
-void WriteData::fix(int ifix, int mth)
+void WriteData::fix(Fix *ifix, int mth)
 {
   // communication buffer for Fix info
+  // maxrow X ncol = largest buffer needed by any proc
 
   int sendrow,ncol;
-  modify->fix[ifix]->write_data_section_size(mth,sendrow,ncol);
+  ifix->write_data_section_size(mth,sendrow,ncol);
   int maxrow;
   MPI_Allreduce(&sendrow,&maxrow,1,MPI_INT,MPI_MAX,world);
 
   double **buf;
-  if (me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
+  if (comm->me == 0) memory->create(buf,MAX(1,maxrow),ncol,"write_data:buf");
   else memory->create(buf,MAX(1,sendrow),ncol,"write_data:buf");
 
   // pack my fix data into buf
 
-  modify->fix[ifix]->write_data_section_pack(mth,buf);
+  ifix->write_data_section_pack(mth,buf);
 
   // write one chunk of info per proc to file
   // proc 0 pings each proc, receives its chunk, writes to file
@@ -716,12 +808,12 @@ void WriteData::fix(int ifix, int mth)
   int tmp,recvrow;
 
   int index = 1;
-  if (me == 0) {
+  if (comm->me == 0) {
     MPI_Status status;
     MPI_Request request;
 
-    modify->fix[ifix]->write_data_section_keyword(mth,fp);
-    for (int iproc = 0; iproc < nprocs; iproc++) {
+    ifix->write_data_section_keyword(mth,fp);
+    for (int iproc = 0; iproc < comm->nprocs; iproc++) {
       if (iproc) {
         MPI_Irecv(&buf[0][0],maxrow*ncol,MPI_DOUBLE,iproc,0,world,&request);
         MPI_Send(&tmp,0,MPI_INT,iproc,0,world);
@@ -730,7 +822,7 @@ void WriteData::fix(int ifix, int mth)
         recvrow /= ncol;
       } else recvrow = sendrow;
 
-      modify->fix[ifix]->write_data_section(mth,fp,recvrow,buf,index);
+      ifix->write_data_section(mth,fp,recvrow,buf,index);
       index += recvrow;
     }
 

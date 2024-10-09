@@ -10,6 +10,8 @@
 #ifndef COLVARVALUE_H
 #define COLVARVALUE_H
 
+#include <list>
+
 #include "colvarmodule.h"
 #include "colvartypes.h"
 
@@ -118,33 +120,22 @@ public:
 
   /// \brief Default constructor: this class defaults to a scalar
   /// number and always behaves like it unless you change its type
-  inline colvarvalue()
-    : value_type(type_scalar), real_value(0.0)
-  {}
+  colvarvalue();
 
-  /// Constructor from a type specification
-  inline colvarvalue(Type const &vti)
-    : value_type(vti)
-  {
-    reset();
-  }
+  /// Constructor from a type flag (note: type_vector also needs the vector length to be set)
+  /// \param[in] vti Value of the \link Type \endlink enum
+  colvarvalue(Type const &vti);
 
   /// Copy constructor from real base type
-  inline colvarvalue(cvm::real const &x)
-    : value_type(type_scalar), real_value(x)
-  {}
+  colvarvalue(cvm::real const &x);
 
   /// \brief Copy constructor from rvector base type (Note: this sets
   /// by default a type \link type_3vector \endlink , if you want a
   /// \link type_unit3vector \endlink you must set it explicitly)
-  inline colvarvalue(cvm::rvector const &v, Type vti = type_3vector)
-    : value_type(vti), rvector_value(v)
-  {}
+  colvarvalue(cvm::rvector const &v, Type vti = type_3vector);
 
   /// \brief Copy constructor from quaternion base type
-  inline colvarvalue(cvm::quaternion const &q, Type vti = type_quaternion)
-    : value_type(vti), quaternion_value(q)
-  {}
+  colvarvalue(cvm::quaternion const &q, Type vti = type_quaternion);
 
   /// Copy constructor from vector1d base type
   colvarvalue(cvm::vector1d<cvm::real> const &v, Type vti = type_vector);
@@ -309,12 +300,31 @@ public:
   /// Undefined operation
   void undef_op() const;
 
+private:
 
-  /// \brief Formatted output operator
-  friend std::ostream & operator << (std::ostream &os, colvarvalue const &q);
+  /// Generic stream writing function (formatted and not)
+  template <typename OST> void write_to_stream_template_(OST &os) const;
 
-  /// \brief Formatted input operator
-  friend std::istream & operator >> (std::istream &is, colvarvalue &q);
+public:
+
+  /// Formatted output operator
+  friend std::ostream & operator << (std::ostream &os, colvarvalue const &x);
+
+  /// Unformatted output operator
+  friend cvm::memory_stream & operator << (cvm::memory_stream &os, colvarvalue const &x);
+
+private:
+
+  /// Generic stream reading function (formatted and not)
+  template <typename IST> void read_from_stream_template_(IST &is);
+
+public:
+
+  /// Formatted input operator
+  friend std::istream & operator >> (std::istream &is, colvarvalue &x);
+
+  /// Unformatted input operator
+  friend cvm::memory_stream & operator >> (cvm::memory_stream &is, colvarvalue &x);
 
   /// Give the number of characters required to output this
   /// colvarvalue, given the current type assigned and the number of
@@ -390,7 +400,7 @@ inline cvm::real colvarvalue::operator [] (int const i) const
   case colvarvalue::type_notset:
   default:
     cvm::error("Error: trying to access a colvar value "
-               "that is not initialized.\n", BUG_ERROR);
+               "that is not initialized.\n", COLVARS_BUG_ERROR);
     return 0.0; break;
   case colvarvalue::type_scalar:
     return real_value; break;
@@ -413,7 +423,7 @@ inline cvm::real & colvarvalue::operator [] (int const i)
   case colvarvalue::type_notset:
   default:
     cvm::error("Error: trying to access a colvar value "
-               "that is not initialized.\n", BUG_ERROR);
+               "that is not initialized.\n", COLVARS_BUG_ERROR);
     return real_value; break;
   case colvarvalue::type_scalar:
     return real_value; break;

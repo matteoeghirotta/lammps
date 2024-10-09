@@ -1,60 +1,40 @@
-/*
 //@HEADER
 // ************************************************************************
 //
-//                        Kokkos v. 2.0
-//              Copyright (2014) Sandia Corporation
+//                        Kokkos v. 4.0
+//       Copyright (2022) National Technology & Engineering
+//               Solutions of Sandia, LLC (NTESS).
 //
-// Under the terms of Contract DE-AC04-94AL85000 with Sandia Corporation,
+// Under the terms of Contract DE-NA0003525 with NTESS,
 // the U.S. Government retains certain rights in this software.
 //
-// Redistribution and use in source and binary forms, with or without
-// modification, are permitted provided that the following conditions are
-// met:
+// Part of Kokkos, under the Apache License v2.0 with LLVM Exceptions.
+// See https://kokkos.org/LICENSE for license information.
+// SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
-// 1. Redistributions of source code must retain the above copyright
-// notice, this list of conditions and the following disclaimer.
-//
-// 2. Redistributions in binary form must reproduce the above copyright
-// notice, this list of conditions and the following disclaimer in the
-// documentation and/or other materials provided with the distribution.
-//
-// 3. Neither the name of the Corporation nor the names of the
-// contributors may be used to endorse or promote products derived from
-// this software without specific prior written permission.
-//
-// THIS SOFTWARE IS PROVIDED BY SANDIA CORPORATION "AS IS" AND ANY
-// EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
-// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
-// PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL SANDIA CORPORATION OR THE
-// CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
-// EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
-// PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
-// PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
-// LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
-// NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-// SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-//
-// Questions? Contact Christian R. Trott (crtrott@sandia.gov)
-//
-// ************************************************************************
 //@HEADER
-*/
 
 /*--------------------------------------------------------------------------*/
 /* Kokkos interfaces */
+
+#ifndef KOKKOS_IMPL_PUBLIC_INCLUDE
+#define KOKKOS_IMPL_PUBLIC_INCLUDE
+#endif
 
 #include <Kokkos_Macros.hpp>
 #ifdef KOKKOS_ENABLE_CUDA
 
 #include <Kokkos_Core.hpp>
 
-#include <Cuda/Kokkos_Cuda_Error.hpp>
-#include <Cuda/Kokkos_Cuda_BlockSize_Deduction.hpp>
-#include <Cuda/Kokkos_Cuda_Instance.hpp>
-#include <Cuda/Kokkos_Cuda_Locks.hpp>
+//#include <Cuda/Kokkos_Cuda_Error.hpp>
+//#include <Cuda/Kokkos_Cuda_BlockSize_Deduction.hpp>
+//#include <Cuda/Kokkos_Cuda_Instance.hpp>
+//#include <Cuda/Kokkos_Cuda_UniqueToken.hpp>
 #include <impl/Kokkos_Error.hpp>
-#include <impl/Kokkos_Profiling_Interface.hpp>
+#include <impl/Kokkos_Tools.hpp>
+#include <impl/Kokkos_CheckedIntegerOps.hpp>
+#include <impl/Kokkos_DeviceManagement.hpp>
+#include <impl/Kokkos_ExecSpaceManager.hpp>
 
 /*--------------------------------------------------------------------------*/
 /* Standard 'C' libraries */
@@ -66,10 +46,34 @@
 #include <sstream>
 #include <string>
 
+#ifdef KOKKOS_IMPL_DEBUG_CUDA_SERIAL_EXECUTION
+namespace Kokkos {
+namespace Impl {
+
+bool CudaInternal::kokkos_impl_cuda_use_serial_execution_v = false;
+
+void CudaInternal::cuda_set_serial_execution(bool val) {
+  CudaInternal::kokkos_impl_cuda_use_serial_execution_v = val;
+}
+bool CudaInternal::cuda_use_serial_execution() {
+  return CudaInternal::kokkos_impl_cuda_use_serial_execution_v;
+}
+
+}  // namespace Impl
+}  // namespace Kokkos
+
+void kokkos_impl_cuda_set_serial_execution(bool val) {
+  Kokkos::Impl::CudaInternal::cuda_set_serial_execution(val);
+}
+bool kokkos_impl_cuda_use_serial_execution() {
+  return Kokkos::Impl::CudaInternal::cuda_use_serial_execution();
+}
+#endif
+
 #ifdef KOKKOS_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE
 
-__device__ __constant__
-unsigned long kokkos_impl_cuda_constant_memory_buffer[ Kokkos::Impl::CudaTraits::ConstantMemoryUsage / sizeof(unsigned long) ] ;
+__device__ __constant__ unsigned long kokkos_impl_cuda_constant_memory_buffer
+    [Kokkos::Impl::CudaTraits::ConstantMemoryUsage / sizeof(unsigned long)];
 
 #endif
 
@@ -80,753 +84,703 @@ namespace Impl {
 
 namespace {
 
-__global__
-void query_cuda_kernel_arch( int * d_arch )
-{
-#if defined( __CUDA_ARCH__ )
-  *d_arch = __CUDA_ARCH__ ;
+__global__ void query_cuda_kernel_arch(int *d_arch) {
+#ifdef _NVHPC_CUDA
+  *d_arch = __builtin_current_device_sm() * 10;
 #else
-  *d_arch = 0 ;
+#if defined(__CUDA_ARCH__)
+  *d_arch = __CUDA_ARCH__;
+#else
+  *d_arch = 0;
+#endif
 #endif
 }
 
 /** Query what compute capability is actually launched to the device: */
-int cuda_kernel_arch()
-{
-  int * d_arch = 0 ;
-  cudaMalloc( (void **) & d_arch , sizeof(int) );
-  query_cuda_kernel_arch<<<1,1>>>( d_arch );
-  int arch = 0 ;
-  cudaMemcpy( & arch , d_arch , sizeof(int) , cudaMemcpyDefault );
-  cudaFree( d_arch );
-  return arch ;
+int cuda_kernel_arch(int device_id) {
+  int arch    = 0;
+  int *d_arch = nullptr;
+
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaSetDevice(device_id));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(
+      cudaMalloc(reinterpret_cast<void **>(&d_arch), sizeof(int)));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(
+      cudaMemcpy(d_arch, &arch, sizeof(int), cudaMemcpyDefault));
+
+  query_cuda_kernel_arch<<<1, 1>>>(d_arch);
+
+  KOKKOS_IMPL_CUDA_SAFE_CALL(
+      cudaMemcpy(&arch, d_arch, sizeof(int), cudaMemcpyDefault));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaFree(d_arch));
+  return arch;
 }
 
-#ifdef KOKKOS_ENABLE_CUDA_UVM
-bool cuda_launch_blocking()
-{
-  const char * env = getenv("CUDA_LAUNCH_BLOCKING");
+constexpr auto sizeScratchGrain =
+    sizeof(Cuda::size_type[Impl::CudaTraits::WarpSize]);
 
-  if (env == 0) return false;
-
-  return atoi(env);
+std::size_t scratch_count(const std::size_t size) {
+  return (size + sizeScratchGrain - 1) / sizeScratchGrain;
 }
+
+}  // namespace
+
+Kokkos::View<uint32_t *, Kokkos::CudaSpace> cuda_global_unique_token_locks(
+    bool deallocate) {
+  static Kokkos::View<uint32_t *, Kokkos::CudaSpace> locks =
+      Kokkos::View<uint32_t *, Kokkos::CudaSpace>();
+  if (!deallocate && locks.extent(0) == 0)
+    locks = Kokkos::View<uint32_t *, Kokkos::CudaSpace>(
+        "Kokkos::UniqueToken<Cuda>::m_locks", Kokkos::Cuda().concurrency());
+  if (deallocate) locks = Kokkos::View<uint32_t *, Kokkos::CudaSpace>();
+  return locks;
+}
+
+void cuda_device_synchronize(const std::string &name) {
+  Kokkos::Tools::Experimental::Impl::profile_fence_event<Kokkos::Cuda>(
+      name,
+      Kokkos::Tools::Experimental::SpecialSynchronizationCases::
+          GlobalDeviceSynchronization,
+#if defined(KOKKOS_COMPILER_CLANG)
+      // annotate with __host__ silence a clang warning about using
+      // cudaDeviceSynchronize in device code
+      [] __host__()
+#else
+      []()
 #endif
-
+      {
+        for (int cuda_device : Kokkos::Impl::CudaInternal::cuda_devices) {
+          KOKKOS_IMPL_CUDA_SAFE_CALL(cudaSetDevice(cuda_device));
+          KOKKOS_IMPL_CUDA_SAFE_CALL(cudaDeviceSynchronize());
+        }
+      });
 }
 
-void cuda_device_synchronize()
-{
-  CUDA_SAFE_CALL( cudaDeviceSynchronize() );
+void cuda_stream_synchronize(const cudaStream_t stream, const CudaInternal *ptr,
+                             const std::string &name) {
+  Kokkos::Tools::Experimental::Impl::profile_fence_event<Kokkos::Cuda>(
+      name,
+      Kokkos::Tools::Experimental::Impl::DirectFenceIDHandle{
+          ptr->impl_get_instance_id()},
+      [&]() {
+        KOKKOS_IMPL_CUDA_SAFE_CALL(
+            (ptr->cuda_stream_synchronize_wrapper(stream)));
+      });
 }
 
-void cuda_internal_error_throw( cudaError e , const char * name, const char * file, const int line )
-{
-  std::ostringstream out ;
-  out << name << " error( " << cudaGetErrorName(e) << "): " << cudaGetErrorString(e);
+void cuda_internal_error_throw(cudaError e, const char *name, const char *file,
+                               const int line) {
+  std::ostringstream out;
+  out << name << " error( " << cudaGetErrorName(e)
+      << "): " << cudaGetErrorString(e);
   if (file) {
     out << " " << file << ":" << line;
   }
-  throw_runtime_exception( out.str() );
+  throw_runtime_exception(out.str());
+}
+
+void cuda_internal_error_abort(cudaError e, const char *name, const char *file,
+                               const int line) {
+  std::ostringstream out;
+  out << name << " error( " << cudaGetErrorName(e)
+      << "): " << cudaGetErrorString(e);
+  if (file) {
+    out << " " << file << ":" << line;
+  }
+  // FIXME Call Kokkos::Impl::host_abort instead of Kokkos::abort to avoid a
+  // warning about Kokkos::abort returning in some cases.
+  host_abort(out.str().c_str());
 }
 
 //----------------------------------------------------------------------------
-// Some significant cuda device properties:
-//
-// cudaDeviceProp::name                : Text label for device
-// cudaDeviceProp::major               : Device major number
-// cudaDeviceProp::minor               : Device minor number
-// cudaDeviceProp::warpSize            : number of threads per warp
-// cudaDeviceProp::multiProcessorCount : number of multiprocessors
-// cudaDeviceProp::sharedMemPerBlock   : capacity of shared memory per block
-// cudaDeviceProp::totalConstMem       : capacity of constant memory
-// cudaDeviceProp::totalGlobalMem      : capacity of global memory
-// cudaDeviceProp::maxGridSize[3]      : maximum grid size
 
-//
-//  Section 4.4.2.4 of the CUDA Toolkit Reference Manual
-//
-// struct cudaDeviceProp {
-//   char name[256];
-//   size_t totalGlobalMem;
-//   size_t sharedMemPerBlock;
-//   int regsPerBlock;
-//   int warpSize;
-//   size_t memPitch;
-//   int maxThreadsPerBlock;
-//   int maxThreadsDim[3];
-//   int maxGridSize[3];
-//   size_t totalConstMem;
-//   int major;
-//   int minor;
-//   int clockRate;
-//   size_t textureAlignment;
-//   int deviceOverlap;
-//   int multiProcessorCount;
-//   int kernelExecTimeoutEnabled;
-//   int integrated;
-//   int canMapHostMemory;
-//   int computeMode;
-//   int concurrentKernels;
-//   int ECCEnabled;
-//   int pciBusID;
-//   int pciDeviceID;
-//   int tccDriver;
-//   int asyncEngineCount;
-//   int unifiedAddressing;
-//   int memoryClockRate;
-//   int memoryBusWidth;
-//   int l2CacheSize;
-//   int maxThreadsPerMultiProcessor;
-// };
-
-
-namespace {
-
-
-
-class CudaInternalDevices {
-public:
-  enum { MAXIMUM_DEVICE_COUNT = 64 };
-  struct cudaDeviceProp  m_cudaProp[ MAXIMUM_DEVICE_COUNT ] ;
-  int                    m_cudaDevCount ;
-
-  CudaInternalDevices();
-
-  static const CudaInternalDevices & singleton();
-};
-
-CudaInternalDevices::CudaInternalDevices()
-{
-  // See 'cudaSetDeviceFlags' for host-device thread interaction
-  // Section 4.4.2.6 of the CUDA Toolkit Reference Manual
-
-  CUDA_SAFE_CALL (cudaGetDeviceCount( & m_cudaDevCount ) );
-
-  if(m_cudaDevCount > MAXIMUM_DEVICE_COUNT) {
-    Kokkos::abort("Sorry, you have more GPUs per node than we thought anybody would ever have. Please report this to github.com/kokkos/kokkos.");
-  }
-  for ( int i = 0 ; i < m_cudaDevCount ; ++i ) {
-    CUDA_SAFE_CALL( cudaGetDeviceProperties( m_cudaProp + i , i ) );
-  }
+int Impl::CudaInternal::concurrency() {
+  static int const concurrency = m_deviceProp.maxThreadsPerMultiProcessor *
+                                 m_deviceProp.multiProcessorCount;
+  return concurrency;
 }
 
-const CudaInternalDevices & CudaInternalDevices::singleton()
-{
-  static CudaInternalDevices self ; return self ;
-}
-
-}
-
-
-int CudaInternal::was_initialized = 0;
-int CudaInternal::was_finalized = 0;
-//----------------------------------------------------------------------------
-
-
-void CudaInternal::print_configuration( std::ostream & s ) const
-{
-  const CudaInternalDevices & dev_info = CudaInternalDevices::singleton();
-
-#if defined( KOKKOS_ENABLE_CUDA )
-    s << "macro  KOKKOS_ENABLE_CUDA      : defined" << std::endl ;
+void CudaInternal::print_configuration(std::ostream &s) const {
+#if defined(KOKKOS_ENABLE_CUDA)
+  s << "macro  KOKKOS_ENABLE_CUDA      : defined\n";
 #endif
-#if defined( CUDA_VERSION )
-    s << "macro  CUDA_VERSION          = " << CUDA_VERSION
-      << " = version " << CUDA_VERSION / 1000
-      << "." << ( CUDA_VERSION % 1000 ) / 10
-      << std::endl ;
+#if defined(CUDA_VERSION)
+  s << "macro  CUDA_VERSION          = " << CUDA_VERSION << " = version "
+    << CUDA_VERSION / 1000 << "." << (CUDA_VERSION % 1000) / 10 << '\n';
 #endif
 
-  for ( int i = 0 ; i < dev_info.m_cudaDevCount ; ++i ) {
-    s << "Kokkos::Cuda[ " << i << " ] "
-      << dev_info.m_cudaProp[i].name
-      << " capability " << dev_info.m_cudaProp[i].major << "." << dev_info.m_cudaProp[i].minor
-      << ", Total Global Memory: " << human_memory_size(dev_info.m_cudaProp[i].totalGlobalMem)
-      << ", Shared Memory per Block: " << human_memory_size(dev_info.m_cudaProp[i].sharedMemPerBlock);
-    if ( m_cudaDev == i ) s << " : Selected" ;
-    s << std::endl ;
+  for (int i : get_visible_devices()) {
+    cudaDeviceProp prop;
+    KOKKOS_IMPL_CUDA_SAFE_CALL(cudaGetDeviceProperties(&prop, i));
+    s << "Kokkos::Cuda[ " << i << " ] " << prop.name << " capability "
+      << prop.major << "." << prop.minor
+      << ", Total Global Memory: " << human_memory_size(prop.totalGlobalMem)
+      << ", Shared Memory per Block: "
+      << human_memory_size(prop.sharedMemPerBlock);
+    if (m_cudaDev == i) s << " : Selected";
+    s << '\n';
   }
 }
 
 //----------------------------------------------------------------------------
 
-CudaInternal::~CudaInternal()
-{
-  if ( m_stream ||
-       m_scratchSpace ||
-       m_scratchFlags ||
-       m_scratchUnified ||
-       m_scratchConcurrentBitset ) {
+CudaInternal::~CudaInternal() {
+  if (m_scratchSpace || m_scratchFlags || m_scratchUnified) {
     std::cerr << "Kokkos::Cuda ERROR: Failed to call Kokkos::Cuda::finalize()"
-              << std::endl ;
-    std::cerr.flush();
+              << std::endl;
   }
 
-  m_cudaDev                 = -1 ;
-  m_cudaArch                = -1 ;
-  m_multiProcCount          = 0 ;
-  m_maxWarpCount            = 0 ;
-  m_maxBlock                = 0 ;
-  m_maxSharedWords          = 0 ;
-  m_maxConcurrency          = 0 ;
-  m_scratchSpaceCount       = 0 ;
-  m_scratchFlagsCount       = 0 ;
-  m_scratchUnifiedCount     = 0 ;
-  m_scratchUnifiedSupported = 0 ;
-  m_streamCount             = 0 ;
-  m_scratchSpace            = 0 ;
-  m_scratchFlags            = 0 ;
-  m_scratchUnified          = 0 ;
-  m_scratchConcurrentBitset = 0 ;
-  m_stream                  = 0 ;
-}
-
-int CudaInternal::verify_is_initialized( const char * const label ) const
-{
-  if ( m_cudaDev < 0 ) {
-    std::cerr << "Kokkos::Cuda::" << label << " : ERROR device not initialized" << std::endl ;
+  m_scratchSpaceCount   = 0;
+  m_scratchFlagsCount   = 0;
+  m_scratchUnifiedCount = 0;
+  m_scratchSpace        = nullptr;
+  m_scratchFlags        = nullptr;
+  m_scratchUnified      = nullptr;
+  m_stream              = nullptr;
+  for (int i = 0; i < m_n_team_scratch; ++i) {
+    m_team_scratch_current_size[i] = 0;
+    m_team_scratch_ptr[i]          = nullptr;
   }
-  return 0 <= m_cudaDev ;
 }
 
-CudaInternal & CudaInternal::singleton()
-{
-  static CudaInternal self ;
-  return self ;
+int CudaInternal::verify_is_initialized(const char *const label) const {
+  if (m_cudaDev < 0) {
+    Kokkos::abort((std::string("Kokkos::Cuda::") + label +
+                   " : ERROR device not initialized\n")
+                      .c_str());
+  }
+  return 0 <= m_cudaDev;
+}
+uint32_t CudaInternal::impl_get_instance_id() const { return m_instance_id; }
+CudaInternal &CudaInternal::singleton() {
+  static CudaInternal self;
+  return self;
+}
+void CudaInternal::fence(const std::string &name) const {
+  Impl::cuda_stream_synchronize(get_stream(), this, name);
 }
 void CudaInternal::fence() const {
-  cudaStreamSynchronize(m_stream);
+  fence("Kokkos::CudaInternal::fence(): Unnamed Instance Fence");
 }
 
-void CudaInternal::initialize( int cuda_device_id , cudaStream_t stream )
-{
-  if ( was_finalized ) Kokkos::abort("Calling Cuda::initialize after Cuda::finalize is illegal\n");
-  was_initialized = 1;
-  if ( is_initialized() ) return;
+void CudaInternal::initialize(cudaStream_t stream) {
+  KOKKOS_EXPECTS(!is_initialized());
 
-  enum { WordSize = sizeof(size_type) };
+  if (was_finalized)
+    Kokkos::abort("Calling Cuda::initialize after Cuda::finalize is illegal\n");
+  was_initialized = true;
 
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-  if ( ! HostSpace::execution_space::is_initialized() ) {
-#else
-  if ( ! HostSpace::execution_space::impl_is_initialized() ) {
-#endif
-    const std::string msg("Cuda::initialize ERROR : HostSpace::execution_space is not initialized");
-    throw_runtime_exception( msg );
-  }
-
-  const CudaInternalDevices & dev_info = CudaInternalDevices::singleton();
-
-  const bool ok_init = 0 == m_scratchSpace || 0 == m_scratchFlags ;
-
-  const bool ok_id   = 0 <= cuda_device_id &&
-                            cuda_device_id < dev_info.m_cudaDevCount ;
-
-  // Need device capability 3.0 or better
-
-  const bool ok_dev = ok_id &&
-    ( 3 <= dev_info.m_cudaProp[ cuda_device_id ].major &&
-      0 <= dev_info.m_cudaProp[ cuda_device_id ].minor );
-
-  if ( ok_init && ok_dev ) {
-
-    const struct cudaDeviceProp & cudaProp =
-      dev_info.m_cudaProp[ cuda_device_id ];
-
-    m_cudaDev = cuda_device_id ;
-
-    CUDA_SAFE_CALL( cudaSetDevice( m_cudaDev ) );
-    Kokkos::Impl::cuda_device_synchronize();
-
-    // Query what compute capability architecture a kernel executes:
-    m_cudaArch = cuda_kernel_arch();
-
-    int compiled_major = m_cudaArch / 100;
-    int compiled_minor = ( m_cudaArch % 100 ) / 10;
-
-    if ( compiled_major < 5 && cudaProp.major >= 5 ) {
-      std::stringstream ss;
-      ss << "Kokkos::Cuda::initialize ERROR: running kernels compiled for compute capability "
-         << compiled_major << "." << compiled_minor
-         << " (< 5.0) on device with compute capability "
-         << cudaProp.major << "." << cudaProp.minor
-         << " (>=5.0), this would give incorrect results!"
-         << std::endl ;
-      std::string msg = ss.str();
-      Kokkos::abort( msg.c_str() );
-    }
-    if ( Kokkos::show_warnings() && (compiled_major != cudaProp.major || compiled_minor != cudaProp.minor) ) {
-      std::cerr << "Kokkos::Cuda::initialize WARNING: running kernels compiled for compute capability "
-                << compiled_major << "." << compiled_minor
-                << " on device with compute capability "
-                << cudaProp.major << "." << cudaProp.minor
-                << " , this will likely reduce potential performance."
-                << std::endl ;
-    }
-
-    // number of multiprocessors
-
-    m_multiProcCount = cudaProp.multiProcessorCount ;
-
-    //----------------------------------
-    // Maximum number of warps,
-    // at most one warp per thread in a warp for reduction.
-
-    m_maxWarpCount = cudaProp.maxThreadsPerBlock / Impl::CudaTraits::WarpSize ;
-
-    if ( Impl::CudaTraits::WarpSize < m_maxWarpCount ) {
-      m_maxWarpCount = Impl::CudaTraits::WarpSize ;
-    }
-
-    m_maxSharedWords = cudaProp.sharedMemPerBlock / WordSize ;
-
-    //----------------------------------
-    // Maximum number of blocks:
-
-    m_maxBlock = cudaProp.maxGridSize[0] ;
-
-    m_shmemPerSM = cudaProp.sharedMemPerMultiprocessor ;
-    m_maxShmemPerBlock = cudaProp.sharedMemPerBlock ;
-    m_regsPerSM = cudaProp.regsPerMultiprocessor ;
-    m_maxBlocksPerSM = m_cudaArch < 500 ? 16 : (
-                       m_cudaArch < 750 ? 32 : (
-                       m_cudaArch == 750 ? 16 : 32));
-    m_maxThreadsPerSM = cudaProp.maxThreadsPerMultiProcessor ;
-    m_maxThreadsPerBlock = cudaProp.maxThreadsPerBlock ;
-
-    //----------------------------------
-
-    m_scratchUnifiedSupported = cudaProp.unifiedAddressing ;
-
-    if ( Kokkos::show_warnings() && ! m_scratchUnifiedSupported ) {
-      std::cerr << "Kokkos::Cuda device "
-                << cudaProp.name << " capability "
-                << cudaProp.major << "." << cudaProp.minor
-                << " does not support unified virtual address space"
-                << std::endl ;
-    }
-
-    //----------------------------------
-    // Multiblock reduction uses scratch flags for counters
-    // and scratch space for partial reduction values.
-    // Allocate some initial space.  This will grow as needed.
-
-    {
-      const unsigned reduce_block_count = m_maxWarpCount * Impl::CudaTraits::WarpSize ;
-
-      (void) scratch_unified( 16 * sizeof(size_type) );
-      (void) scratch_flags( reduce_block_count * 2  * sizeof(size_type) );
-      (void) scratch_space( reduce_block_count * 16 * sizeof(size_type) );
-    }
-    //----------------------------------
-    // Concurrent bitset for obtaining unique tokens from within
-    // an executing kernel.
-    {
-
-      m_maxConcurrency =
-        m_maxThreadsPerSM * cudaProp.multiProcessorCount ;
-
-      const int32_t buffer_bound =
-         Kokkos::Impl::concurrent_bitset::buffer_bound( m_maxConcurrency );
-
-      // Allocate and initialize uint32_t[ buffer_bound ]
-
-      typedef Kokkos::Impl::SharedAllocationRecord< Kokkos::CudaSpace , void > Record ;
-
-      Record * const r = Record::allocate( Kokkos::CudaSpace()
-                                         , "InternalScratchBitset"
-                                         , sizeof(uint32_t) * buffer_bound );
-
-      Record::increment( r );
-
-      m_scratchConcurrentBitset = reinterpret_cast<uint32_t *>( r->data() );
-
-      CUDA_SAFE_CALL( cudaMemset( m_scratchConcurrentBitset , 0 , sizeof(uint32_t) * buffer_bound ) );
-
-    }
-    //----------------------------------
-
-  }
-  else {
-
-    std::ostringstream msg ;
-    msg << "Kokkos::Cuda::initialize(" << cuda_device_id << ") FAILED" ;
-
-    if ( ! ok_init ) {
-      msg << " : Already initialized" ;
-    }
-    if ( ! ok_id ) {
-      msg << " : Device identifier out of range "
-          << "[0.." << dev_info.m_cudaDevCount << "]" ;
-    }
-    else if ( ! ok_dev ) {
-      msg << " : Device " ;
-      msg << dev_info.m_cudaProp[ cuda_device_id ].major ;
-      msg << "." ;
-      msg << dev_info.m_cudaProp[ cuda_device_id ].minor ;
-      msg << " has insufficient capability, required 3.0 or better" ;
-    }
-    Kokkos::Impl::throw_runtime_exception( msg.str() );
-  }
-
-  #ifdef KOKKOS_ENABLE_CUDA_UVM
-    if( Kokkos::show_warnings() && !cuda_launch_blocking() ) {
-      std::cerr << "Kokkos::Cuda::initialize WARNING: Cuda is allocating into UVMSpace by default" << std::endl;
-      std::cerr << "                                  without setting CUDA_LAUNCH_BLOCKING=1." << std::endl;
-      std::cerr << "                                  The code must call Cuda().fence() after each kernel" << std::endl;
-      std::cerr << "                                  or will likely crash when accessing data on the host." << std::endl;
-    }
-
-    const char * env_force_device_alloc = getenv("CUDA_MANAGED_FORCE_DEVICE_ALLOC");
-    bool force_device_alloc;
-    if (env_force_device_alloc == 0) force_device_alloc=false;
-    else force_device_alloc=atoi(env_force_device_alloc)!=0;
-
-    const char * env_visible_devices = getenv("CUDA_VISIBLE_DEVICES");
-    bool visible_devices_one=true;
-    if (env_visible_devices == 0) visible_devices_one=false;
-
-    if( Kokkos::show_warnings() && (!visible_devices_one && !force_device_alloc) ) {
-      std::cerr << "Kokkos::Cuda::initialize WARNING: Cuda is allocating into UVMSpace by default" << std::endl;
-      std::cerr << "                                  without setting CUDA_MANAGED_FORCE_DEVICE_ALLOC=1 or " << std::endl;
-      std::cerr << "                                  setting CUDA_VISIBLE_DEVICES." << std::endl;
-      std::cerr << "                                  This could on multi GPU systems lead to severe performance" << std::endl;
-      std::cerr << "                                  penalties." << std::endl;
-    }
-  #endif
-
-  #ifdef KOKKOS_ENABLE_PRE_CUDA_10_DEPRECATION_API
-  cudaThreadSetCacheConfig(cudaFuncCachePreferShared);
-  #else
-  cudaDeviceSetCacheConfig(cudaFuncCachePreferShared);
-  #endif
-
-  // Init the array for used for arbitrarily sized atomics
-  if(stream == 0)
-    Impl::initialize_host_cuda_lock_arrays();
+  // Check that the device associated with the stream matches cuda_device
+  CUcontext context;
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaError_t(cuStreamGetCtx(stream, &context)));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaError_t(cuCtxPushCurrent(context)));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaError_t(cuCtxGetDevice(&m_cudaDev)));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaSetDevice(m_cudaDev));
 
   m_stream = stream;
+  CudaInternal::cuda_devices.insert(m_cudaDev);
+
+  // Allocate a staging buffer for constant mem in pinned host memory
+  // and an event to avoid overwriting driver for previous kernel launches
+  if (!constantMemHostStagingPerDevice[m_cudaDev])
+    KOKKOS_IMPL_CUDA_SAFE_CALL((cuda_malloc_host_wrapper(
+        reinterpret_cast<void **>(&constantMemHostStagingPerDevice[m_cudaDev]),
+        CudaTraits::ConstantMemoryUsage)));
+
+  if (!constantMemReusablePerDevice[m_cudaDev])
+    KOKKOS_IMPL_CUDA_SAFE_CALL(
+        (cuda_event_create_wrapper(&constantMemReusablePerDevice[m_cudaDev])));
+
+  //----------------------------------
+  // Multiblock reduction uses scratch flags for counters
+  // and scratch space for partial reduction values.
+  // Allocate some initial space.  This will grow as needed.
+
+  {
+    // Maximum number of warps,
+    // at most one warp per thread in a warp for reduction.
+    auto const maxWarpCount = std::min<unsigned>(
+        m_deviceProp.maxThreadsPerBlock / CudaTraits::WarpSize,
+        CudaTraits::WarpSize);
+    unsigned const reduce_block_count =
+        maxWarpCount * Impl::CudaTraits::WarpSize;
+
+    (void)scratch_unified(16 * sizeof(size_type));
+    (void)scratch_flags(reduce_block_count * 2 * sizeof(size_type));
+    (void)scratch_space(reduce_block_count * 16 * sizeof(size_type));
+  }
+
+  for (int i = 0; i < m_n_team_scratch; ++i) {
+    m_team_scratch_current_size[i] = 0;
+    m_team_scratch_ptr[i]          = nullptr;
+  }
+
+  m_num_scratch_locks = concurrency();
+  KOKKOS_IMPL_CUDA_SAFE_CALL(
+      (cuda_malloc_wrapper(reinterpret_cast<void **>(&m_scratch_locks),
+                           sizeof(int32_t) * m_num_scratch_locks)));
+  KOKKOS_IMPL_CUDA_SAFE_CALL((cuda_memset_wrapper(
+      m_scratch_locks, 0, sizeof(int32_t) * m_num_scratch_locks)));
 }
 
 //----------------------------------------------------------------------------
 
-typedef Cuda::size_type ScratchGrain[ Impl::CudaTraits::WarpSize ] ;
-enum { sizeScratchGrain = sizeof(ScratchGrain) };
+Cuda::size_type *CudaInternal::scratch_flags(const std::size_t size) const {
+  if (verify_is_initialized("scratch_flags") &&
+      m_scratchFlagsCount < scratch_count(size)) {
+    auto mem_space = Kokkos::CudaSpace::impl_create(m_cudaDev, m_stream);
 
+    if (m_scratchFlags) {
+      mem_space.deallocate(m_scratchFlags,
+                           m_scratchFlagsCount * sizeScratchGrain);
+    }
 
-Cuda::size_type *
-CudaInternal::scratch_flags( const Cuda::size_type size ) const 
-{
-  if ( verify_is_initialized("scratch_flags") && m_scratchFlagsCount * sizeScratchGrain < size ) {
+    m_scratchFlagsCount = scratch_count(size);
 
+    std::size_t alloc_size =
+        multiply_overflow_abort(m_scratchFlagsCount, sizeScratchGrain);
+    m_scratchFlags = static_cast<size_type *>(
+        mem_space.allocate("Kokkos::InternalScratchFlags", alloc_size));
 
-    m_scratchFlagsCount = ( size + sizeScratchGrain - 1 ) / sizeScratchGrain ;
-
-    typedef Kokkos::Impl::SharedAllocationRecord< Kokkos::CudaSpace , void > Record ;
-
-    if( m_scratchFlags )
-      Record::decrement( Record::get_record( m_scratchFlags ) );
-
-    Record * const r = Record::allocate( Kokkos::CudaSpace()
-                                       , "InternalScratchFlags"
-                                       , ( sizeof( ScratchGrain ) * m_scratchFlagsCount ) );
-
-    Record::increment( r );
-
-    m_scratchFlags = reinterpret_cast<size_type *>( r->data() );
-
-    CUDA_SAFE_CALL( cudaMemset( m_scratchFlags , 0 , m_scratchFlagsCount * sizeScratchGrain ) );
+    // We only zero-initialize the allocation when we actually allocate.
+    // It's the responsibility of the features using scratch_flags,
+    // namely parallel_reduce and parallel_scan, to reset the used values to 0.
+    KOKKOS_IMPL_CUDA_SAFE_CALL(
+        (cuda_memset_wrapper(m_scratchFlags, 0, alloc_size)));
   }
 
-  return m_scratchFlags ;
+  return m_scratchFlags;
 }
 
-Cuda::size_type *
-CudaInternal::scratch_space( const Cuda::size_type size ) const 
-{
-  if ( verify_is_initialized("scratch_space") && m_scratchSpaceCount * sizeScratchGrain < size ) {
+Cuda::size_type *CudaInternal::scratch_space(const std::size_t size) const {
+  if (verify_is_initialized("scratch_space") &&
+      m_scratchSpaceCount < scratch_count(size)) {
+    auto mem_space = Kokkos::CudaSpace::impl_create(m_cudaDev, m_stream);
 
-    m_scratchSpaceCount = ( size + sizeScratchGrain - 1 ) / sizeScratchGrain ;
+    if (m_scratchSpace) {
+      mem_space.deallocate(m_scratchSpace,
+                           m_scratchSpaceCount * sizeScratchGrain);
+    }
 
-     typedef Kokkos::Impl::SharedAllocationRecord< Kokkos::CudaSpace , void > Record ;
+    m_scratchSpaceCount = scratch_count(size);
 
-     if( m_scratchSpace )
-       Record::decrement( Record::get_record( m_scratchSpace ) );
-
-     Record * const r = Record::allocate( Kokkos::CudaSpace()
-                                        , "InternalScratchSpace"
-                                        , ( sizeof( ScratchGrain ) * m_scratchSpaceCount ) );
-
-     Record::increment( r );
-
-     m_scratchSpace = reinterpret_cast<size_type *>( r->data() );
+    std::size_t alloc_size =
+        multiply_overflow_abort(m_scratchSpaceCount, sizeScratchGrain);
+    m_scratchSpace = static_cast<size_type *>(
+        mem_space.allocate("Kokkos::InternalScratchSpace", alloc_size));
   }
 
-  return m_scratchSpace ;
+  return m_scratchSpace;
 }
 
-Cuda::size_type *
-CudaInternal::scratch_unified( const Cuda::size_type size ) const
-{
-  if ( verify_is_initialized("scratch_unified") &&
-       m_scratchUnifiedSupported && m_scratchUnifiedCount * sizeScratchGrain < size ) {
+Cuda::size_type *CudaInternal::scratch_unified(const std::size_t size) const {
+  if (verify_is_initialized("scratch_unified") &&
+      m_scratchUnifiedCount < scratch_count(size)) {
+    auto mem_space =
+        Kokkos::CudaHostPinnedSpace::impl_create(m_cudaDev, m_stream);
 
-    m_scratchUnifiedCount = ( size + sizeScratchGrain - 1 ) / sizeScratchGrain ;
+    if (m_scratchUnified) {
+      mem_space.deallocate(m_scratchUnified,
+                           m_scratchUnifiedCount * sizeScratchGrain);
+    }
 
-    typedef Kokkos::Impl::SharedAllocationRecord< Kokkos::CudaHostPinnedSpace , void > Record ;
+    m_scratchUnifiedCount = scratch_count(size);
 
-    if( m_scratchUnified )
-      Record::decrement( Record::get_record( m_scratchUnified ) );
-
-    Record * const r = Record::allocate( Kokkos::CudaHostPinnedSpace()
-                                       , "InternalScratchUnified"
-                                       , ( sizeof( ScratchGrain ) * m_scratchUnifiedCount ) );
-
-    Record::increment( r );
-
-    m_scratchUnified = reinterpret_cast<size_type *>( r->data() );
+    std::size_t alloc_size =
+        multiply_overflow_abort(m_scratchUnifiedCount, sizeScratchGrain);
+    m_scratchUnified = static_cast<size_type *>(
+        mem_space.allocate("Kokkos::InternalScratchUnified", alloc_size));
   }
 
-  return m_scratchUnified ;
+  return m_scratchUnified;
 }
 
-Cuda::size_type *
-CudaInternal::scratch_functor( const Cuda::size_type size ) const
-{
-  if ( verify_is_initialized("scratch_functor") &&
-       m_scratchFunctorSize < size ) {
+Cuda::size_type *CudaInternal::scratch_functor(const std::size_t size) const {
+  if (verify_is_initialized("scratch_functor") && m_scratchFunctorSize < size) {
+    auto mem_space = Kokkos::CudaSpace::impl_create(m_cudaDev, m_stream);
 
-    m_scratchFunctorSize = size ;
+    if (m_scratchFunctor) {
+      mem_space.deallocate(m_scratchFunctor, m_scratchFunctorSize);
+    }
 
-    typedef Kokkos::Impl::SharedAllocationRecord< Kokkos::CudaSpace , void > Record ;
+    m_scratchFunctorSize = size;
 
-    if( m_scratchFunctor )
-      Record::decrement( Record::get_record( m_scratchFunctor ) );
-
-    Record * const r = Record::allocate( Kokkos::CudaSpace()
-                                       , "InternalScratchFunctor"
-                                       , m_scratchFunctorSize );
-
-    Record::increment( r );
-
-    m_scratchFunctor = reinterpret_cast<size_type *>( r->data() );
+    m_scratchFunctor = static_cast<size_type *>(mem_space.allocate(
+        "Kokkos::InternalScratchFunctor", m_scratchFunctorSize));
   }
 
-  return m_scratchFunctor ;
+  return m_scratchFunctor;
 }
 
-//----------------------------------------------------------------------------
-
-void CudaInternal::finalize()
-{
-  was_finalized = 1;
-  if ( 0 != m_scratchSpace || 0 != m_scratchFlags ) {
-
-    Impl::finalize_host_cuda_lock_arrays();
-
-    if(m_stream!=0) cudaStreamDestroy(m_stream);
-
-    typedef Kokkos::Impl::SharedAllocationRecord< CudaSpace > RecordCuda ;
-    typedef Kokkos::Impl::SharedAllocationRecord< CudaHostPinnedSpace > RecordHost ;
-
-    RecordCuda::decrement( RecordCuda::get_record( m_scratchFlags ) );
-    RecordCuda::decrement( RecordCuda::get_record( m_scratchSpace ) );
-    RecordHost::decrement( RecordHost::get_record( m_scratchUnified ) );
-    RecordCuda::decrement( RecordCuda::get_record( m_scratchConcurrentBitset ) );
-    if(m_scratchFunctorSize>0)
-    RecordCuda::decrement( RecordCuda::get_record( m_scratchFunctor ) );
-
-    m_cudaDev             = -1 ;
-    m_multiProcCount      = 0 ;
-    m_maxWarpCount        = 0 ;
-    m_maxBlock            = 0 ;
-    m_maxSharedWords      = 0 ;
-    m_scratchSpaceCount   = 0 ;
-    m_scratchFlagsCount   = 0 ;
-    m_scratchUnifiedCount = 0 ;
-    m_streamCount         = 0 ;
-    m_scratchSpace        = 0 ;
-    m_scratchFlags        = 0 ;
-    m_scratchUnified      = 0 ;
-    m_scratchConcurrentBitset = 0 ;
-    m_stream              = 0 ;
+int CudaInternal::acquire_team_scratch_space() {
+  int current_team_scratch = 0;
+  int zero                 = 0;
+  while (!m_team_scratch_pool[current_team_scratch].compare_exchange_weak(
+      zero, 1, std::memory_order_release, std::memory_order_relaxed)) {
+    current_team_scratch = (current_team_scratch + 1) % m_n_team_scratch;
   }
+
+  return current_team_scratch;
+}
+
+void *CudaInternal::resize_team_scratch_space(int scratch_pool_id,
+                                              std::int64_t bytes,
+                                              bool force_shrink) {
+  // Multiple ParallelFor/Reduce Teams can call this function at the same time
+  // and invalidate the m_team_scratch_ptr. We use a pool to avoid any race
+  // condition.
+  auto mem_space = Kokkos::CudaSpace::impl_create(m_cudaDev, m_stream);
+  if (m_team_scratch_current_size[scratch_pool_id] == 0) {
+    m_team_scratch_current_size[scratch_pool_id] = bytes;
+    m_team_scratch_ptr[scratch_pool_id] =
+        mem_space.allocate("Kokkos::CudaSpace::TeamScratchMemory",
+                           m_team_scratch_current_size[scratch_pool_id]);
+  }
+  if ((bytes > m_team_scratch_current_size[scratch_pool_id]) ||
+      ((bytes < m_team_scratch_current_size[scratch_pool_id]) &&
+       (force_shrink))) {
+    mem_space.deallocate(m_team_scratch_ptr[scratch_pool_id],
+                         m_team_scratch_current_size[scratch_pool_id]);
+    m_team_scratch_current_size[scratch_pool_id] = bytes;
+    m_team_scratch_ptr[scratch_pool_id] =
+        mem_space.allocate("Kokkos::CudaSpace::TeamScratchMemory", bytes);
+  }
+  return m_team_scratch_ptr[scratch_pool_id];
+}
+
+void CudaInternal::release_team_scratch_space(int scratch_pool_id) {
+  m_team_scratch_pool[scratch_pool_id] = 0;
 }
 
 //----------------------------------------------------------------------------
 
-Cuda::size_type cuda_internal_multiprocessor_count()
-{ return CudaInternal::singleton().m_multiProcCount ; }
+void CudaInternal::finalize() {
+  // skip if finalize() has already been called
+  if (was_finalized) return;
 
-CudaSpace::size_type cuda_internal_maximum_concurrent_block_count()
-{
-  #if defined(KOKKOS_ARCH_KEPLER)
-  // Compute capability 3.0 through 3.7
-  enum : int { max_resident_blocks_per_multiprocessor = 16 };
-  #else
-  // Compute capability 5.0 through 6.2
-  enum : int { max_resident_blocks_per_multiprocessor = 32 };
-  #endif
-   return CudaInternal::singleton().m_multiProcCount
-          * max_resident_blocks_per_multiprocessor ;
-};
+  was_finalized = true;
 
-Cuda::size_type cuda_internal_maximum_warp_count()
-{ return CudaInternal::singleton().m_maxWarpCount ; }
+  auto cuda_mem_space = Kokkos::CudaSpace::impl_create(m_cudaDev, m_stream);
+  if (nullptr != m_scratchSpace || nullptr != m_scratchFlags) {
+    auto host_mem_space =
+        Kokkos::CudaHostPinnedSpace::impl_create(m_cudaDev, m_stream);
+    cuda_mem_space.deallocate(m_scratchFlags,
+                              m_scratchFlagsCount * sizeScratchGrain);
+    cuda_mem_space.deallocate(m_scratchSpace,
+                              m_scratchSpaceCount * sizeScratchGrain);
+    host_mem_space.deallocate(m_scratchUnified,
+                              m_scratchUnifiedCount * sizeScratchGrain);
+    if (m_scratchFunctorSize > 0) {
+      cuda_mem_space.deallocate(m_scratchFunctor, m_scratchFunctorSize);
+    }
+  }
 
-Cuda::size_type cuda_internal_maximum_grid_count()
-{ return CudaInternal::singleton().m_maxBlock ; }
+  for (int i = 0; i < m_n_team_scratch; ++i) {
+    if (m_team_scratch_current_size[i] > 0)
+      cuda_mem_space.deallocate(m_team_scratch_ptr[i],
+                                m_team_scratch_current_size[i]);
+  }
 
-Cuda::size_type cuda_internal_maximum_shared_words()
-{ return CudaInternal::singleton().m_maxSharedWords ; }
+  m_scratchSpaceCount   = 0;
+  m_scratchFlagsCount   = 0;
+  m_scratchUnifiedCount = 0;
+  m_scratchSpace        = nullptr;
+  m_scratchFlags        = nullptr;
+  m_scratchUnified      = nullptr;
+  for (int i = 0; i < m_n_team_scratch; ++i) {
+    m_team_scratch_current_size[i] = 0;
+    m_team_scratch_ptr[i]          = nullptr;
+  }
 
-Cuda::size_type * cuda_internal_scratch_space( const Cuda& instance, const Cuda::size_type size )
-{ return instance.impl_internal_space_instance()->scratch_space( size ); }
+  KOKKOS_IMPL_CUDA_SAFE_CALL((cuda_free_wrapper(m_scratch_locks)));
+  m_scratch_locks     = nullptr;
+  m_num_scratch_locks = 0;
+}
 
-Cuda::size_type * cuda_internal_scratch_flags( const Cuda& instance, const Cuda::size_type size )
-{ return instance.impl_internal_space_instance()->scratch_flags( size ); }
+//----------------------------------------------------------------------------
 
-Cuda::size_type * cuda_internal_scratch_unified( const Cuda& instance, const Cuda::size_type size )
-{ return instance.impl_internal_space_instance()->scratch_unified( size ); }
+Cuda::size_type *cuda_internal_scratch_space(const Cuda &instance,
+                                             const std::size_t size) {
+  return instance.impl_internal_space_instance()->scratch_space(size);
+}
 
+Cuda::size_type *cuda_internal_scratch_flags(const Cuda &instance,
+                                             const std::size_t size) {
+  return instance.impl_internal_space_instance()->scratch_flags(size);
+}
 
-} // namespace Impl
-} // namespace Kokkos
+Cuda::size_type *cuda_internal_scratch_unified(const Cuda &instance,
+                                               const std::size_t size) {
+  return instance.impl_internal_space_instance()->scratch_unified(size);
+}
+
+}  // namespace Impl
+}  // namespace Kokkos
 
 //----------------------------------------------------------------------------
 
 namespace Kokkos {
 
-Cuda::size_type Cuda::detect_device_count()
-{ return Impl::CudaInternalDevices::singleton().m_cudaDevCount ; }
-
-int Cuda::concurrency()
-{ return Impl::CudaInternal::singleton().m_maxConcurrency ; }
-
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-int Cuda::is_initialized()
+#ifdef KOKKOS_ENABLE_DEPRECATED_CODE_4
+int Cuda::concurrency() {
 #else
-int Cuda::impl_is_initialized()
+int Cuda::concurrency() const {
 #endif
-{ return Impl::CudaInternal::singleton().is_initialized(); }
-
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-void Cuda::initialize( const Cuda::SelectDevice config , size_t num_instances )
-#else
-void Cuda::impl_initialize( const Cuda::SelectDevice config , size_t num_instances )
-#endif
-{
-  Impl::CudaInternal::singleton().initialize( config.cuda_device_id , 0 );
-
-  #if defined(KOKKOS_ENABLE_PROFILING)
-    Kokkos::Profiling::initialize();
-  #endif
+  return Impl::CudaInternal::concurrency();
 }
 
-std::vector<unsigned>
-Cuda::detect_device_arch()
-{
-  const Impl::CudaInternalDevices & s = Impl::CudaInternalDevices::singleton();
+int Cuda::impl_is_initialized() {
+  return Impl::CudaInternal::singleton().is_initialized();
+}
 
-  std::vector<unsigned> output( s.m_cudaDevCount );
+void Cuda::impl_initialize(InitializationSettings const &settings) {
+  const std::vector<int> &visible_devices = Impl::get_visible_devices();
+  const int cuda_device_id =
+      Impl::get_gpu(settings).value_or(visible_devices[0]);
 
-  for ( int i = 0 ; i < s.m_cudaDevCount ; ++i ) {
-    output[i] = s.m_cudaProp[i].major * 100 + s.m_cudaProp[i].minor ;
+  cudaDeviceProp cudaProp;
+  KOKKOS_IMPL_CUDA_SAFE_CALL(
+      cudaGetDeviceProperties(&cudaProp, cuda_device_id));
+  Impl::CudaInternal::m_deviceProp = cudaProp;
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaSetDevice(cuda_device_id));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaDeviceSynchronize());
+
+  // Query what compute capability architecture a kernel executes:
+  Impl::CudaInternal::m_cudaArch = Impl::cuda_kernel_arch(cuda_device_id);
+
+  if (Impl::CudaInternal::m_cudaArch == 0) {
+    Kokkos::abort(
+        "Kokkos::Cuda::initialize ERROR: likely mismatch of architecture\n");
   }
 
-  return output ;
-}
+  int compiled_major = Impl::CudaInternal::m_cudaArch / 100;
+  int compiled_minor = (Impl::CudaInternal::m_cudaArch % 100) / 10;
 
-Cuda::size_type Cuda::device_arch()
-{
-  const int dev_id = Impl::CudaInternal::singleton().m_cudaDev ;
-
-  int dev_arch = 0 ;
-
-  if ( 0 <= dev_id ) {
-    const struct cudaDeviceProp & cudaProp =
-      Impl::CudaInternalDevices::singleton().m_cudaProp[ dev_id ] ;
-
-    dev_arch = cudaProp.major * 100 + cudaProp.minor ;
+  if ((compiled_major > cudaProp.major) ||
+      ((compiled_major == cudaProp.major) &&
+       (compiled_minor > cudaProp.minor))) {
+    std::stringstream ss;
+    ss << "Kokkos::Cuda::initialize ERROR: running kernels compiled for "
+          "compute capability "
+       << compiled_major << "." << compiled_minor
+       << " on device with compute capability " << cudaProp.major << "."
+       << cudaProp.minor << " is not supported by CUDA!\n";
+    std::string msg = ss.str();
+    Kokkos::abort(msg.c_str());
+  }
+  if (Kokkos::show_warnings() &&
+      (compiled_major != cudaProp.major || compiled_minor != cudaProp.minor)) {
+    std::cerr << "Kokkos::Cuda::initialize WARNING: running kernels compiled "
+                 "for compute capability "
+              << compiled_major << "." << compiled_minor
+              << " on device with compute capability " << cudaProp.major << "."
+              << cudaProp.minor
+              << " , this will likely reduce potential performance."
+              << std::endl;
   }
 
-  return dev_arch ;
+  //----------------------------------
+
+#ifdef KOKKOS_ENABLE_CUDA_UVM
+  const char *env_force_device_alloc =
+      getenv("CUDA_MANAGED_FORCE_DEVICE_ALLOC");
+  bool force_device_alloc;
+  if (env_force_device_alloc == nullptr)
+    force_device_alloc = false;
+  else
+    force_device_alloc = std::stoi(env_force_device_alloc) != 0;
+
+  const char *env_visible_devices = getenv("CUDA_VISIBLE_DEVICES");
+  bool visible_devices_one        = true;
+  if (env_visible_devices == nullptr) visible_devices_one = false;
+
+  if (Kokkos::show_warnings() &&
+      (!visible_devices_one && !force_device_alloc)) {
+    std::cerr << R"warning(
+Kokkos::Cuda::initialize WARNING: Cuda is allocating into UVMSpace by default
+                                  without setting CUDA_MANAGED_FORCE_DEVICE_ALLOC=1 or
+                                  setting CUDA_VISIBLE_DEVICES.
+                                  This could on multi GPU systems lead to severe performance"
+                                  penalties.)warning"
+              << std::endl;
+  }
+#endif
+
+  //----------------------------------
+
+#ifdef KOKKOS_ENABLE_IMPL_CUDA_UNIFIED_MEMORY
+  // Check if unified memory is available
+  int cuda_result;
+  cudaDeviceGetAttribute(&cuda_result, cudaDevAttrConcurrentManagedAccess,
+                         cuda_device_id);
+  if (cuda_result == 0) {
+    Kokkos::abort(
+        "Kokkos::Cuda::initialize ERROR: Unified memory is not available on "
+        "this device\n"
+        "Please recompile Kokkos with "
+        "-DKokkos_ENABLE_IMPL_CUDA_UNIFIED_MEMORY=OFF\n");
+  }
+#endif
+
+  //----------------------------------
+
+  cudaStream_t singleton_stream;
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaSetDevice(cuda_device_id));
+  KOKKOS_IMPL_CUDA_SAFE_CALL(cudaStreamCreate(&singleton_stream));
+
+  // Init the array for used for arbitrarily sized atomics
+  desul::Impl::init_lock_arrays();  // FIXME
+
+  Impl::CudaInternal::singleton().initialize(singleton_stream);
 }
 
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-void Cuda::finalize()
-#else
-void Cuda::impl_finalize()
-#endif
-{
+void Cuda::impl_finalize() {
+  (void)Impl::cuda_global_unique_token_locks(true);
+  desul::Impl::finalize_lock_arrays();  // FIXME
+
+  for (const auto cuda_device : Kokkos::Impl::CudaInternal::cuda_devices) {
+    KOKKOS_IMPL_CUDA_SAFE_CALL(cudaSetDevice(cuda_device));
+    KOKKOS_IMPL_CUDA_SAFE_CALL(
+        cudaFreeHost(Kokkos::Impl::CudaInternal::constantMemHostStagingPerDevice
+                         [cuda_device]));
+    KOKKOS_IMPL_CUDA_SAFE_CALL(cudaEventDestroy(
+        Kokkos::Impl::CudaInternal::constantMemReusablePerDevice[cuda_device]));
+  }
+
+  auto &deep_copy_space = Impl::cuda_get_deep_copy_space(/*initialize*/ false);
+  if (deep_copy_space)
+    deep_copy_space->impl_internal_space_instance()->finalize();
+  KOKKOS_IMPL_CUDA_SAFE_CALL(
+      cudaStreamDestroy(Impl::cuda_get_deep_copy_stream()));
+
   Impl::CudaInternal::singleton().finalize();
-
-  #if defined(KOKKOS_ENABLE_PROFILING)
-    Kokkos::Profiling::finalize();
-  #endif
+  KOKKOS_IMPL_CUDA_SAFE_CALL(
+      cudaStreamDestroy(Impl::CudaInternal::singleton().m_stream));
 }
 
 Cuda::Cuda()
-  : m_space_instance( &Impl::CudaInternal::singleton() )
-{
-  Impl::CudaInternal::singleton().verify_is_initialized( "Cuda instance constructor" );
+    : m_space_instance(&Impl::CudaInternal::singleton(),
+                       [](Impl::CudaInternal *) {}) {
+  Impl::CudaInternal::singleton().verify_is_initialized(
+      "Cuda instance constructor");
 }
 
-Cuda::Cuda(cudaStream_t stream)
-  :   m_space_instance(new Impl::CudaInternal)
-{
-  Impl::CudaInternal::singleton().verify_is_initialized( "Cuda instance constructor" );
-  m_space_instance->initialize(Impl::CudaInternal::singleton().m_cudaDev,stream);
+KOKKOS_DEPRECATED Cuda::Cuda(cudaStream_t stream, bool manage_stream)
+    : Cuda(stream,
+           manage_stream ? Impl::ManageStream::yes : Impl::ManageStream::no) {}
+
+Cuda::Cuda(cudaStream_t stream, Impl::ManageStream manage_stream)
+    : m_space_instance(
+          new Impl::CudaInternal, [manage_stream](Impl::CudaInternal *ptr) {
+            ptr->finalize();
+            if (static_cast<bool>(manage_stream)) {
+              KOKKOS_IMPL_CUDA_SAFE_CALL(cudaStreamDestroy(ptr->m_stream));
+            }
+            delete ptr;
+          }) {
+  Impl::CudaInternal::singleton().verify_is_initialized(
+      "Cuda instance constructor");
+  m_space_instance->initialize(stream);
 }
 
-void Cuda::print_configuration( std::ostream & s , const bool )
-{ Impl::CudaInternal::singleton().print_configuration( s ); }
+void Cuda::print_configuration(std::ostream &os, bool /*verbose*/) const {
+  os << "Device Execution Space:\n";
+  os << "  KOKKOS_ENABLE_CUDA: yes\n";
 
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-bool Cuda::sleep() { return false ; }
-
-bool Cuda::wake() { return true ; }
-#endif
-
-void Cuda::impl_static_fence()
-{
-  Kokkos::Impl::cuda_device_synchronize();
-}
-
-#ifdef KOKKOS_ENABLE_DEPRECATED_CODE
-void Cuda::fence() {
-  impl_static_fence();
-}
+  os << "Cuda Options:\n";
+  os << "  KOKKOS_ENABLE_CUDA_LAMBDA: ";
+#ifdef KOKKOS_ENABLE_CUDA_LAMBDA
+  os << "yes\n";
 #else
-void Cuda::fence() const {
-  m_space_instance->fence();
-}
+  os << "no\n";
+#endif
+#ifdef KOKKOS_ENABLE_DEPRECATED_CODE_4
+  os << "  KOKKOS_ENABLE_CUDA_LDG_INTRINSIC: ";
+  os << "yes\n";
+#endif
+  os << "  KOKKOS_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE: ";
+#ifdef KOKKOS_ENABLE_CUDA_RELOCATABLE_DEVICE_CODE
+  os << "yes\n";
+#else
+  os << "no\n";
+#endif
+  os << "  KOKKOS_ENABLE_CUDA_UVM: ";
+#ifdef KOKKOS_ENABLE_CUDA_UVM
+  os << "yes\n";
+#else
+  os << "no\n";
+#endif
+  os << "  KOKKOS_ENABLE_CXX11_DISPATCH_LAMBDA: ";
+#ifdef KOKKOS_ENABLE_CXX11_DISPATCH_LAMBDA
+  os << "yes\n";
+#else
+  os << "no\n";
+#endif
+  os << "  KOKKOS_ENABLE_IMPL_CUDA_MALLOC_ASYNC: ";
+#ifdef KOKKOS_ENABLE_IMPL_CUDA_MALLOC_ASYNC
+  os << "yes\n";
+#else
+  os << "no\n";
+#endif
+#ifdef KOKKOS_ENABLE_IMPL_CUDA_UNIFIED_MEMORY
+  os << "  KOKKOS_ENABLE_IMPL_CUDA_UNIFIED_MEMORY: ";
+  os << "yes\n";
 #endif
 
-const char* Cuda::name() { return "Cuda"; }
+  os << "\nCuda Runtime Configuration:\n";
 
-cudaStream_t Cuda::cuda_stream() const { return m_space_instance->m_stream ; }
-int          Cuda::cuda_device() const { return m_space_instance->m_cudaDev ; }
+  m_space_instance->print_configuration(os);
+}
 
+void Cuda::impl_static_fence(const std::string &name) {
+  Kokkos::Impl::cuda_device_synchronize(name);
+}
 
-} // namespace Kokkos
+void Cuda::fence(const std::string &name) const {
+  m_space_instance->fence(name);
+}
 
-namespace Kokkos {
-namespace Experimental {
+const char *Cuda::name() { return "Cuda"; }
+uint32_t Cuda::impl_instance_id() const noexcept {
+  return m_space_instance->impl_get_instance_id();
+}
 
-UniqueToken< Kokkos::Cuda , Kokkos::Experimental::UniqueTokenScope::Global >::
-UniqueToken( Kokkos::Cuda const & )
-  : m_buffer( Kokkos::Impl::CudaInternal::singleton().m_scratchConcurrentBitset )
-  , m_count(  Kokkos::Impl::CudaInternal::singleton().m_maxConcurrency )
-  {}
+cudaStream_t Cuda::cuda_stream() const {
+  return m_space_instance->get_stream();
+}
+int Cuda::cuda_device() const { return m_space_instance->m_cudaDev; }
+const cudaDeviceProp &Cuda::cuda_device_prop() const {
+  return m_space_instance->m_deviceProp;
+}
 
-} // namespace Experimental
-} // namespace Kokkos
+namespace Impl {
+
+int g_cuda_space_factory_initialized =
+    initialize_space_factory<Cuda>("150_Cuda");
+
+int CudaInternal::m_cudaArch = -1;
+cudaDeviceProp CudaInternal::m_deviceProp;
+std::set<int> CudaInternal::cuda_devices = {};
+std::map<int, unsigned long *> CudaInternal::constantMemHostStagingPerDevice =
+    {};
+std::map<int, cudaEvent_t> CudaInternal::constantMemReusablePerDevice = {};
+std::map<int, std::mutex> CudaInternal::constantMemMutexPerDevice     = {};
+
+}  // namespace Impl
+
+}  // namespace Kokkos
+
+void Kokkos::Impl::create_Cuda_instances(std::vector<Cuda> &instances) {
+  for (int s = 0; s < int(instances.size()); s++) {
+    cudaStream_t stream;
+    KOKKOS_IMPL_CUDA_SAFE_CALL((
+        instances[s].impl_internal_space_instance()->cuda_stream_create_wrapper(
+            &stream)));
+    instances[s] = Cuda(stream, ManageStream::yes);
+  }
+}
 
 #else
 
 void KOKKOS_CORE_SRC_CUDA_IMPL_PREVENT_LINK_ERROR() {}
 
-#endif // KOKKOS_ENABLE_CUDA
-
+#endif  // KOKKOS_ENABLE_CUDA

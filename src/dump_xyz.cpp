@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,21 +13,24 @@
 ------------------------------------------------------------------------- */
 
 #include "dump_xyz.h"
-#include <cstring>
+
 #include "atom.h"
 #include "error.h"
+#include "label_map.h"
 #include "memory.h"
 #include "update.h"
 
+#include <cstring>
+
 using namespace LAMMPS_NS;
 
-#define ONELINE 128
-#define DELTA 1048576
+static constexpr int ONELINE = 128;
+static constexpr int DELTA = 1048576;
 
 /* ---------------------------------------------------------------------- */
 
 DumpXYZ::DumpXYZ(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg),
-  typenames(NULL)
+  typenames(nullptr)
 {
   if (narg != 5) error->all(FLERR,"Illegal dump xyz command");
   if (binary || multiproc) error->all(FLERR,"Invalid dump xyz filename");
@@ -38,15 +42,12 @@ DumpXYZ::DumpXYZ(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg),
   sort_flag = 1;
   sortcol = 0;
 
-  if (format_default) delete [] format_default;
+  delete[] format_default;
 
-  char *str = (char *) "%s %g %g %g";
-  int n = strlen(str) + 1;
-  format_default = new char[n];
-  strcpy(format_default,str);
+  format_default = utils::strdup("%s %g %g %g");
 
   ntypes = atom->ntypes;
-  typenames = NULL;
+  typenames = nullptr;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -54,13 +55,13 @@ DumpXYZ::DumpXYZ(LAMMPS *lmp, int narg, char **arg) : Dump(lmp, narg, arg),
 DumpXYZ::~DumpXYZ()
 {
   delete[] format_default;
-  format_default = NULL;
+  format_default = nullptr;
 
   if (typenames) {
     for (int i = 1; i <= ntypes; i++)
       delete [] typenames[i];
     delete [] typenames;
-    typenames = NULL;
+    typenames = nullptr;
   }
 }
 
@@ -71,23 +72,20 @@ void DumpXYZ::init_style()
   // format = copy of default or user-specified line format
 
   delete [] format;
-  char *str;
-  if (format_line_user) str = format_line_user;
-  else str = format_default;
 
-  int n = strlen(str) + 2;
-  format = new char[n];
-  strcpy(format,str);
-  strcat(format,"\n");
+  if (format_line_user)
+    format = utils::strdup(fmt::format("{}\n", format_line_user));
+  else
+    format = utils::strdup(fmt::format("{}\n", format_default));
 
   // initialize typenames array to be backward compatible by default
   // a 32-bit int can be maximally 10 digits plus sign
 
-  if (typenames == NULL) {
+  if (typenames == nullptr) {
     typenames = new char*[ntypes+1];
     for (int itype = 1; itype <= ntypes; itype++) {
       typenames[itype] = new char[12];
-      sprintf(typenames[itype],"%d",itype);
+      snprintf(typenames[itype],12,"%d",itype);
     }
   }
 
@@ -114,17 +112,41 @@ int DumpXYZ::modify_param(int narg, char **arg)
         delete [] typenames[i];
 
       delete [] typenames;
-      typenames = NULL;
+      typenames = nullptr;
     }
 
     typenames = new char*[ntypes+1];
     for (int itype = 1; itype <= ntypes; itype++) {
-      int n = strlen(arg[itype]) + 1;
-      typenames[itype] = new char[n];
-      strcpy(typenames[itype],arg[itype]);
+      typenames[itype] = utils::strdup(arg[itype]);
     }
 
     return ntypes+1;
+  }
+
+  if (strcmp(arg[0],"types") == 0) {
+    if (narg < 2) error->all(FLERR,"Illegal dump_modify command");
+
+    if (typenames) {
+      for (int i = 1; i <= ntypes; i++)
+        delete [] typenames[i];
+
+      delete [] typenames;
+      typenames = nullptr;
+    }
+
+    if (strcmp(arg[1],"numeric") == 0) {
+      return 2;
+    } else if (strcmp(arg[1],"labels") == 0) {
+      if (!atom->labelmapflag)
+        error->all(FLERR, "Label map must be defined when using 'types labels'");
+    } else error->all(FLERR, "Illegal option for dump_modify 'types' keyword");
+
+    typenames = new char*[ntypes+1];
+    for (int itype = 1; itype <= ntypes; itype++) {
+      typenames[itype] = utils::strdup(atom->lmap->typelabel[itype-1]);
+    }
+
+    return 2;
   }
 
   return 0;
@@ -135,8 +157,12 @@ int DumpXYZ::modify_param(int narg, char **arg)
 void DumpXYZ::write_header(bigint n)
 {
   if (me == 0) {
-    fprintf(fp,BIGINT_FORMAT "\n",n);
-    fprintf(fp,"Atoms. Timestep: " BIGINT_FORMAT "\n",update->ntimestep);
+    if (!fp) error->one(FLERR, "Must not use 'run pre no' after creating a new dump");
+
+    auto header = fmt::format("{}\n Atoms. Timestep: {}", n, update->ntimestep);
+    if (time_flag) header += fmt::format(" Time: {:.6f}", compute_time());
+    header += "\n";
+    fmt::print(fp, header);
   }
 }
 
@@ -164,7 +190,6 @@ void DumpXYZ::pack(tagint *ids)
     }
 }
 
-
 /* ----------------------------------------------------------------------
    convert mybuf of doubles to one big formatted string in sbuf
    return -1 if strlen exceeds an int, since used as arg in MPI calls in Dump
@@ -181,9 +206,8 @@ int DumpXYZ::convert_string(int n, double *mybuf)
       memory->grow(sbuf,maxsbuf,"dump:sbuf");
     }
 
-    offset += sprintf(&sbuf[offset],format,
-                      typenames[static_cast<int> (mybuf[m+1])],
-                      mybuf[m+2],mybuf[m+3],mybuf[m+4]);
+    offset += snprintf(&sbuf[offset], maxsbuf-offset, format, typenames[static_cast<int> (mybuf[m+1])],
+                      mybuf[m+2], mybuf[m+3], mybuf[m+4]);
     m += size_one;
   }
 
@@ -201,7 +225,8 @@ void DumpXYZ::write_data(int n, double *mybuf)
 
 void DumpXYZ::write_string(int n, double *mybuf)
 {
-  fwrite(mybuf,sizeof(char),n,fp);
+  if (mybuf)
+    fwrite(mybuf,sizeof(char),n,fp);
 }
 
 /* ---------------------------------------------------------------------- */

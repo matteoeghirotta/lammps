@@ -10,10 +10,13 @@
 #ifndef COLVARBIAS_H
 #define COLVARBIAS_H
 
+#include <memory>
+
 #include "colvar.h"
 #include "colvarparse.h"
 #include "colvardeps.h"
 
+class colvar_grid_scalar;
 
 /// \brief Collective variable bias, base class
 class colvarbias
@@ -23,10 +26,13 @@ public:
   /// Name of this bias
   std::string name;
 
-  /// Type of this bias
+  /// Keyword indicating the type of this bias
   std::string bias_type;
 
-  /// If there is more than one bias of this type, record its rank
+  /// Keyword used in state files (== bias_type most of the time)
+  std::string state_keyword;
+
+  /// Track how many times a bias of this type was defined
   int rank;
 
   /// Add a new collective variable to this bias
@@ -54,6 +60,10 @@ public:
   /// Some implementations may use calc_energy() and calc_forces()
   virtual int update();
 
+  /// Returns true if the current step represent a valid increment, whose data
+  /// can be recorded (as opposed to e.g. a continuation step from a restart)
+  virtual bool can_accumulate_data();
+
   /// Compute the energy of the bias
   /// Uses the vector of colvar values provided if not NULL, and the values
   /// currently cached in the bias instance otherwise
@@ -65,7 +75,7 @@ public:
   virtual int calc_forces(std::vector<colvarvalue> const *values);
 
   /// Send forces to the collective variables
-  virtual void communicate_forces();
+  int communicate_forces();
 
   /// Carry out operations needed before next step is run
   virtual int end_of_step();
@@ -83,10 +93,15 @@ public:
   // FIXME this is currently 1D only
   virtual int current_bin();
   //// Give the count at a given bin index.
-  // FIXME this is currently 1D only
   virtual int bin_count(int bin_index);
+  /// Return the average number of samples in a given "radius" around current bin
+  virtual int local_sample_count(int radius);
+
   //// Share information between replicas, whatever it may be.
   virtual int replica_share();
+
+  /// Report the frequency at which this bias needs to communicate with replicas
+  virtual size_t replica_share_freq() const;
 
   /// Perform analysis tasks
   virtual void analyze() {}
@@ -125,29 +140,98 @@ public:
   /// Write the values of specific mutable properties to a string
   virtual std::string const get_state_params() const;
 
+  /// Check the name of the bias vs. the given string, set the matching_state flag accordingly
+  int check_matching_state(std::string const &conf);
+
   /// Read the values of specific mutable properties from a string
   virtual int set_state_params(std::string const &state_conf);
 
-  /// Write all mutable data not already written by get_state_params()
+  /// Write all mutable data not already written by get_state_params() to a formatted stream
   virtual std::ostream & write_state_data(std::ostream &os)
   {
     return os;
   }
 
-  /// Read all mutable data not already set by set_state_params()
+  /// Write all mutable data not already written by get_state_params() to an unformatted stream
+  virtual cvm::memory_stream & write_state_data(cvm::memory_stream &os)
+  {
+    return os;
+  }
+
+  /// Read all mutable data not already set by set_state_params() from a formatted stream
   virtual std::istream & read_state_data(std::istream &is)
   {
     return is;
   }
 
-  /// Read a keyword from the state data (typically a header)
-  std::istream & read_state_data_key(std::istream &is, char const *key);
+  /// Read all mutable data not already set by set_state_params() from an unformatted stream
+  virtual cvm::memory_stream & read_state_data(cvm::memory_stream &is)
+  {
+    return is;
+  }
 
-  /// Write the bias configuration to a restart file or other stream
-  virtual std::ostream & write_state(std::ostream &os);
+  /// Write a keyword header for a data sequence to a formatted stream
+  /// \param[in,out] os Output stream
+  /// \param[in] key  Keyword labeling the header block
+  /// \param[in] header  Whether this is the header of a multi-line segment vs a single line
+  std::ostream &write_state_data_key(std::ostream &os, std::string const &key, bool header = true);
 
-  /// Read the bias configuration from a restart file or other stream
-  virtual std::istream & read_state(std::istream &is);
+  /// Write a keyword header for a data sequence to an unformatted stream
+  /// \param[in,out] os Output stream
+  /// \param[in] key  Keyword labeling the header block
+  /// \param[in] header  Ignored
+  cvm::memory_stream &write_state_data_key(cvm::memory_stream &os, std::string const &key,
+                                           bool header = true);
+
+private:
+
+  /// Read a keyword header for a data sequence from a stream
+  /// \param[in,out] Input stream
+  /// \param[in] Keyword labeling the header block; an error will be raised if not matching
+  template <typename IST> IST &read_state_data_key_template_(IST &is, std::string const &key);
+
+public:
+
+  /// Read a keyword header for a data sequence from a formatted stream
+  /// \param[in,out] Input stream
+  /// \param[in] Keyword labeling the header block; an error will be raised if not matching
+  std::istream & read_state_data_key(std::istream &is, std::string const &key);
+
+  /// Read a keyword header for a data sequence from an unformatted stream
+  /// \param[in,out] Input stream
+  /// \param[in] Keyword labeling the header block; an error will be raised if not matching
+  cvm::memory_stream & read_state_data_key(cvm::memory_stream &is, std::string const &key);
+
+private:
+
+  /// Generic stream reading function (formatted and not)
+  template <typename IST> IST & read_state_template_(IST &is);
+
+public:
+
+  /// Write the bias configuration to a formatted stream
+  std::ostream &write_state(std::ostream &os);
+
+  /// Write the bias configuration to an unformatted stream
+  cvm::memory_stream & write_state(cvm::memory_stream &os);
+
+  /// Read the bias configuration from a formatted stream
+  std::istream & read_state(std::istream &is);
+
+  /// Read the bias configuration from an unformatted stream
+  cvm::memory_stream & read_state(cvm::memory_stream &is);
+
+  /// Write the bias state to a file with the given prefix
+  int write_state_prefix(std::string const &prefix);
+
+  /// Write the bias state to a string
+  int write_state_string(std::string &output);
+
+  /// Read the bias state from a file with this name or prefix
+  int read_state_prefix(std::string const &prefix);
+
+  /// Read the bias state from this string buffer
+  int read_state_string(char const *buffer);
 
   /// Write a label to the trajectory file (comment line)
   virtual std::ostream & write_traj_label(std::ostream &os);
@@ -160,6 +244,9 @@ public:
   {
     return COLVARS_OK;
   }
+
+  /// Frequency for writing output files
+  size_t output_freq;
 
   /// Write any output files that this bias may have (e.g. PMF files)
   virtual int write_output_files()
@@ -207,6 +294,9 @@ protected:
   /// through each colvar object
   std::vector<colvar *>    colvars;
 
+  /// \brief Up to date value of each colvar
+  std::vector<colvarvalue> colvar_values;
+
   /// \brief Current forces from this bias to the variables
   std::vector<colvarvalue> colvar_forces;
 
@@ -226,6 +316,13 @@ protected:
   /// \brief Step number read from the last state file
   cvm::step_number         state_file_step;
 
+  /// Flag used to tell if the state string being read is for this bias
+  bool matching_state;
+
+  /// \brief The biasing forces will be scaled by the factor in this grid
+  /// if b_bias_force_scaled is true
+  colvar_grid_scalar*      biasing_force_scaling_factors;
+  std::vector<int>         biasing_force_scaling_factors_bin;
 };
 
 
@@ -239,8 +336,6 @@ public:
   colvarbias_ti(char const *key);
   virtual ~colvarbias_ti();
 
-  virtual int clear_state_data();
-
   virtual int init(std::string const &conf);
   virtual int init_grids();
   virtual int update();
@@ -253,7 +348,9 @@ public:
   virtual std::string const get_state_params() const;
   virtual int set_state_params(std::string const &state_conf);
   virtual std::ostream & write_state_data(std::ostream &os);
+  virtual cvm::memory_stream & write_state_data(cvm::memory_stream &os);
   virtual std::istream & read_state_data(std::istream &is);
+  virtual cvm::memory_stream & read_state_data(cvm::memory_stream &is);
   virtual int write_output_files();
 
 protected:
@@ -262,10 +359,10 @@ protected:
   std::vector<colvarvalue> ti_system_forces;
 
   /// Averaged system forces
-  colvar_grid_gradient *ti_avg_forces;
+  std::shared_ptr<colvar_grid_gradient> ti_avg_forces;
 
   /// Histogram of sampled data
-  colvar_grid_count *ti_count;
+  std::shared_ptr<colvar_grid_count> ti_count;
 
   /// Because total forces may be from the last simulation step,
   /// store the index of the variables then

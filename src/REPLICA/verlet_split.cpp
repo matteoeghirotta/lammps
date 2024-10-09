@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -42,7 +43,7 @@ using namespace LAMMPS_NS;
 /* ---------------------------------------------------------------------- */
 
 VerletSplit::VerletSplit(LAMMPS *lmp, int narg, char **arg) :
-  Verlet(lmp, narg, arg), qsize(NULL), qdisp(NULL), xsize(NULL), xdisp(NULL), f_kspace(NULL)
+  Verlet(lmp, narg, arg), qsize(nullptr), qdisp(nullptr), xsize(nullptr), xdisp(nullptr), f_kspace(nullptr)
 {
   // error checks on partitions
 
@@ -51,9 +52,8 @@ VerletSplit::VerletSplit(LAMMPS *lmp, int narg, char **arg) :
   if (universe->procs_per_world[0] % universe->procs_per_world[1])
     error->universe_all(FLERR,"Verlet/split requires Rspace partition "
                         "size be multiple of Kspace partition size");
-  if (comm->style != 0)
-    error->universe_all(FLERR,"Verlet/split can only currently be used with "
-                        "comm_style brick");
+  if (comm->style != Comm::BRICK)
+    error->universe_all(FLERR,"Verlet/split can only currently be used with comm_style brick");
 
   // master = 1 for Rspace procs, 0 for Kspace procs
 
@@ -194,7 +194,7 @@ VerletSplit::VerletSplit(LAMMPS *lmp, int narg, char **arg) :
   // allocate dummy version for Kspace partition
 
   maxatom = 0;
-  f_kspace = NULL;
+  f_kspace = nullptr;
   if (!master) memory->create(f_kspace,1,1,"verlet/split:f_kspace");
 }
 
@@ -216,19 +216,27 @@ VerletSplit::~VerletSplit()
 
 void VerletSplit::init()
 {
-  if (comm->style != 0)
-    error->universe_all(FLERR,"Verlet/split can only currently be used with "
-                        "comm_style brick");
+  if (comm->style != Comm::BRICK)
+    error->universe_all(FLERR,"Verlet/split can only currently be used with comm_style brick");
   if (!force->kspace && comm->me == 0)
-    error->warning(FLERR,"No Kspace calculation with verlet/split");
+    error->warning(FLERR,"A KSpace style must be defined with verlet/split");
 
-  if (force->kspace_match("/tip4p",0)) tip4p_flag = 1;
-  else tip4p_flag = 0;
+  // error for as-yet unsupported verlet/split KSpace options
 
-  // currently TIP4P does not work with verlet/split, so generate error
-  // see Axel email on this, also other TIP4P notes below
+  int errflag = 0;
+  if (!atom->q_flag) errflag = 1;
+  if (force->kspace->tip4pflag) errflag = 1;
+  if (force->kspace->dipoleflag) errflag = 1;
+  if (force->kspace->spinflag) errflag = 1;
 
-  if (tip4p_flag) error->all(FLERR,"Verlet/split does not yet support TIP4P");
+  if (errflag)
+    error->all(FLERR,"Verlet/split cannot (yet) be used with kpace style {}", force->kspace_style);
+
+  // partial support for TIP4P, see where this flag is used below
+
+  tip4pflag = force->kspace->tip4pflag;
+
+  // invoke parent Verlet init
 
   Verlet::init();
 }
@@ -289,7 +297,7 @@ void VerletSplit::run(int n)
 
   Fix *fix_omp;
   int ifix = modify->find_fix("package_omp");
-  if (ifix < 0) fix_omp = NULL;
+  if (ifix < 0) fix_omp = nullptr;
   else fix_omp = modify->fix[ifix];
 
   // flags for timestepping iterations
@@ -299,7 +307,7 @@ void VerletSplit::run(int n)
   int n_pre_neighbor = modify->n_pre_neighbor;
   int n_pre_force = modify->n_pre_force;
   int n_pre_reverse = modify->n_pre_reverse;
-  int n_post_force = modify->n_post_force;
+  int n_post_force = modify->n_post_force_any;
   int n_end_of_step = modify->n_end_of_step;
 
   if (atom->sortfreq > 0) sortflag = 1;
@@ -367,7 +375,7 @@ void VerletSplit::run(int n)
         timer->stamp(Timer::PAIR);
       }
 
-      if (atom->molecular) {
+      if (atom->molecular != Atom::ATOMIC) {
         if (force->bond) force->bond->compute(eflag,vflag);
         if (force->angle) force->angle->compute(eflag,vflag);
         if (force->dihedral) force->dihedral->compute(eflag,vflag);
@@ -403,7 +411,7 @@ void VerletSplit::run(int n)
 
       // TIP4P PPPM puts forces on ghost atoms, so must reverse_comm()
 
-      if (tip4p_flag && force->newton) {
+      if (tip4pflag && force->newton) {
         comm->reverse_comm();
         timer->stamp(Timer::COMM);
       }
@@ -459,7 +467,7 @@ void VerletSplit::rk_setup()
   // setup qdisp, xsize, xdisp based on qsize
   // only needed by Kspace proc
   // set Kspace nlocal to sum of Rspace nlocals
-  // insure Kspace atom arrays are large enough
+  // ensure Kspace atom arrays are large enough
 
   if (!master) {
     qsize[0] = qdisp[0] = xsize[0] = xdisp[0] = 0;
@@ -486,7 +494,7 @@ void VerletSplit::rk_setup()
   //   could do this by calling r2k_comm() here and not again from run()
   //   except that forward_comm() in r2k_comm() is wrong
 
-  if (tip4p_flag) {
+  if (tip4pflag) {
     //r2k_comm();
     MPI_Gatherv(atom->type,n,MPI_INT,atom->type,qsize,qdisp,MPI_INT,0,block);
     MPI_Gatherv(atom->tag,n,MPI_LMP_TAGINT,
@@ -544,7 +552,7 @@ void VerletSplit::r2k_comm()
 
   // for TIP4P, Kspace partition needs to update its ghost atoms
 
-  if (tip4p_flag && !master) {
+  if (tip4pflag && !master) {
     timer->stamp();
     comm->forward_comm();
     timer->stamp(Timer::COMM);
@@ -580,8 +588,8 @@ void VerletSplit::k2r_comm()
    memory usage of Kspace force array on master procs
 ------------------------------------------------------------------------- */
 
-bigint VerletSplit::memory_usage()
+double VerletSplit::memory_usage()
 {
-  bigint bytes = maxatom*3 * sizeof(double);
+  double bytes = (double)maxatom*3 * sizeof(double);
   return bytes;
 }

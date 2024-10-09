@@ -1,21 +1,24 @@
 Calculate viscosity
 ===================
 
-The shear viscosity eta of a fluid can be measured in at least 5 ways
-using various options in LAMMPS.  See the examples/VISCOSITY directory
+The shear viscosity :math:`\eta` of a fluid can be measured in at least 6 ways
+using various options in LAMMPS.  See the ``examples/VISCOSITY`` directory
 for scripts that implement the 5 methods discussed here for a simple
-Lennard-Jones fluid model.  Also, see the :doc:`Howto kappa <Howto_kappa>` doc page for an analogous discussion for
-thermal conductivity.
+Lennard-Jones fluid model and 1 method for SPC/E water model.
+Also, see the :doc:`page on calculating thermal conductivity <Howto_kappa>`
+for an analogous discussion for thermal conductivity.
 
-Eta is a measure of the propensity of a fluid to transmit momentum in
+:math:`\eta` is a measure of the propensity of a fluid to transmit momentum in
 a direction perpendicular to the direction of velocity or momentum
 flow.  Alternatively it is the resistance the fluid has to being
 sheared.  It is given by
 
-J = -eta grad(Vstream)
+.. math::
 
-where J is the momentum flux in units of momentum per area per time.
-and grad(Vstream) is the spatial gradient of the velocity of the fluid
+   J = -\eta \cdot \text{grad}(V_{\text{stream}})
+
+where :math:`J` is the momentum flux in units of momentum per area per time.
+and :math:`\text{grad}(V_{\text{stream}})` is the spatial gradient of the velocity of the fluid
 moving in another direction, normal to the area through which the
 momentum flows.  Viscosity thus has units of pressure-time.
 
@@ -37,11 +40,11 @@ velocity to prevent the fluid from heating up.
 
 In both cases, the velocity profile setup in the fluid by this
 procedure can be monitored by the :doc:`fix ave/chunk <fix_ave_chunk>`
-command, which determines grad(Vstream) in the equation above.
-E.g. the derivative in the y-direction of the Vx component of fluid
-motion or grad(Vstream) = dVx/dy.  The Pxy off-diagonal component of
+command, which determines :math:`\text{grad}(V_{\text{stream}})` in the equation above.
+E.g. the derivative in the y-direction of the :math:`V_x` component of fluid
+motion or :math:`\text{grad}(V_{\text{stream}}) = \frac{\text{d} V_x}{\text{d} y}`.  The :math:`P_{xy}` off-diagonal component of
 the pressure or stress tensor, as calculated by the :doc:`compute pressure <compute_pressure>` command, can also be monitored, which
-is the J term in the equation above.  See the :doc:`Howto nemd <Howto_nemd>` doc page for details on NEMD simulations.
+is the :math:`J` term in the equation above.  See the :doc:`Howto nemd <Howto_nemd>` page for details on NEMD simulations.
 
 The third method is to perform a reverse non-equilibrium MD simulation
 using the :doc:`fix viscosity <fix_viscosity>` command which implements
@@ -54,7 +57,7 @@ See the :doc:`fix viscosity <fix_viscosity>` command for details.
 
 The fourth method is based on the Green-Kubo (GK) formula which
 relates the ensemble average of the auto-correlation of the
-stress/pressure tensor to eta.  This can be done in a fully
+stress/pressure tensor to :math:`\eta`.  This can be done in a fully
 equilibrated simulation which is in contrast to the two preceding
 non-equilibrium methods, where momentum flows continuously through the
 simulation box.
@@ -62,18 +65,18 @@ simulation box.
 Here is an example input script that calculates the viscosity of
 liquid Ar via the GK formalism:
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    # Sample LAMMPS input script for viscosity of liquid Ar
 
    units       real
-   variable    T equal 86.4956
+   variable    T equal 200.0       # run temperature
+   variable    Tinit equal 250.0   # equilibration temperature
    variable    V equal vol
    variable    dt equal 4.0
    variable    p equal 400     # correlation length
    variable    s equal 5       # sample interval
-   variable    d equal $p\*$s   # dump interval
+   variable    d equal $p*$s   # dump interval
 
    # convert from LAMMPS real units to SI
 
@@ -81,7 +84,7 @@ liquid Ar via the GK formalism:
    variable    atm2Pa equal 101325.0
    variable    A2m equal 1.0e-10
    variable    fs2s equal 1.0e-15
-   variable    convert equal ${atm2Pa}\*${atm2Pa}\*${fs2s}\*${A2m}\*${A2m}\*${A2m}
+   variable    convert equal ${atm2Pa}*${atm2Pa}*${fs2s}*${A2m}*${A2m}*${A2m}
 
    # setup problem
 
@@ -93,18 +96,20 @@ liquid Ar via the GK formalism:
    create_atoms 1 box
    mass         1 39.948
    pair_style   lj/cut 13.0
-   pair_coeff   \* \* 0.2381 3.405
+   pair_coeff   * * 0.2381 3.405
    timestep     ${dt}
    thermo       $d
 
    # equilibration and thermalization
 
-   velocity     all create $T 102486 mom yes rot yes dist gaussian
-   fix          NVT all nvt temp $T $T 10 drag 0.2
+   velocity     all create ${Tinit} 102486 mom yes rot yes dist gaussian
+   fix          NVT all nvt temp ${Tinit} ${Tinit} 10 drag 0.2
    run          8000
 
    # viscosity calculation, switch to NVE if desired
 
+   velocity     all create $T 102486 mom yes rot yes dist gaussian
+   fix          NVT all nvt temp $T $T 10 drag 0.2
    #unfix       NVT
    #fix         NVE all nve
 
@@ -114,15 +119,15 @@ liquid Ar via the GK formalism:
    variable     pyz equal pyz
    fix          SS all ave/correlate $s $p $d &
                 v_pxy v_pxz v_pyz type auto file S0St.dat ave running
-   variable     scale equal ${convert}/(${kB}\*$T)\*$V\*$s\*${dt}
-   variable     v11 equal trap(f_SS[3])\*${scale}
-   variable     v22 equal trap(f_SS[4])\*${scale}
-   variable     v33 equal trap(f_SS[5])\*${scale}
+   variable     scale equal ${convert}/(${kB}*$T)*$V*$s*${dt}
+   variable     v11 equal trap(f_SS[3])*${scale}
+   variable     v22 equal trap(f_SS[4])*${scale}
+   variable     v33 equal trap(f_SS[5])*${scale}
    thermo_style custom step temp press v_pxy v_pxz v_pyz v_v11 v_v22 v_v33
    run          100000
    variable     v equal (v_v11+v_v22+v_v33)/3.0
    variable     ndens equal count(all)/vol
-   print        "average viscosity: $v [Pa.s] @ $T K, ${ndens} /A\^3"
+   print        "average viscosity: $v [Pa.s] @ $T K, ${ndens} atoms/A^3"
 
 The fifth method is related to the above Green-Kubo method,
 but uses the Einstein formulation, analogous to the Einstein
@@ -131,13 +136,25 @@ time-integrated momentum fluxes play the role of Cartesian
 coordinates, whose mean-square displacement increases linearly
 with time at sufficiently long times.
 
+The sixth is the periodic perturbation method, which is also a non-equilibrium MD method.
+However, instead of measuring the momentum flux in response to an applied velocity gradient,
+it measures the velocity profile in response to applied stress.
+A cosine-shaped periodic acceleration is added to the system via the
+:doc:`fix accelerate/cos <fix_accelerate_cos>` command,
+and the :doc:`compute viscosity/cos<compute_viscosity_cos>` command is used to monitor the
+generated velocity profile and remove the velocity bias before thermostatting.
+
+.. note::
+
+    An article by :ref:`(Hess) <Hess3>` discussed the accuracy and efficiency of these methods.
 
 ----------
 
-
 .. _Daivis-viscosity:
-
-
 
 **(Daivis and Todd)** Daivis and Todd, Nonequilibrium Molecular Dynamics (book),
 Cambridge University Press, https://doi.org/10.1017/9781139017848, (2017).
+
+.. _Hess3:
+
+**(Hess)** Hess, B. The Journal of Chemical Physics 2002, 116 (1), 209-217.

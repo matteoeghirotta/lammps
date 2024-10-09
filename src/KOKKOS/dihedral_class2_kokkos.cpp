@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -16,29 +17,28 @@
 ------------------------------------------------------------------------- */
 
 #include "dihedral_class2_kokkos.h"
-#include <cmath>
-#include <cstdlib>
+
 #include "atom_kokkos.h"
-#include "comm.h"
-#include "neighbor_kokkos.h"
-#include "domain.h"
-#include "force.h"
-#include "update.h"
-#include "memory_kokkos.h"
-#include "error.h"
 #include "atom_masks.h"
+#include "comm.h"
+#include "error.h"
+#include "force.h"
+#include "memory_kokkos.h"
+#include "neighbor_kokkos.h"
+
+#include <cmath>
 
 using namespace LAMMPS_NS;
 
-#define TOLERANCE 0.05
-#define SMALL     0.001
-#define SMALLER   0.00001
+static constexpr double TOLERANCE = 0.05;
+static constexpr double SMALL =     0.001;
 
 /* ---------------------------------------------------------------------- */
 
 template<class DeviceType>
 DihedralClass2Kokkos<DeviceType>::DihedralClass2Kokkos(LAMMPS *lmp) : DihedralClass2(lmp)
 {
+  kokkosable = 1;
   atomKK = (AtomKokkos *) atom;
   neighborKK = (NeighborKokkos *) neighbor;
   execution_space = ExecutionSpaceFromDevice<DeviceType>::space;
@@ -48,6 +48,8 @@ DihedralClass2Kokkos<DeviceType>::DihedralClass2Kokkos(LAMMPS *lmp) : DihedralCl
   k_warning_flag = DAT::tdual_int_scalar("Dihedral:warning_flag");
   d_warning_flag = k_warning_flag.view<DeviceType>();
   h_warning_flag = k_warning_flag.h_view;
+
+  centroidstressflag = CENTROID_NOTAVAIL;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -80,7 +82,7 @@ void DihedralClass2Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   }
   if (vflag_atom) {
     memoryKK->destroy_kokkos(k_vatom,vatom);
-    memoryKK->create_kokkos(k_vatom,vatom,maxvatom,6,"dihedral:vatom");
+    memoryKK->create_kokkos(k_vatom,vatom,maxvatom,"dihedral:vatom");
     d_vatom = k_vatom.template view<DeviceType>();
   }
 
@@ -136,7 +138,7 @@ void DihedralClass2Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   newton_bond = force->newton_bond;
 
   h_warning_flag() = 0;
-  k_warning_flag.template modify<LMPHostType>();
+  k_warning_flag.modify_host();
   k_warning_flag.template sync<DeviceType>();
 
   copymode = 1;
@@ -162,9 +164,9 @@ void DihedralClass2Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
   // error check
 
   k_warning_flag.template modify<DeviceType>();
-  k_warning_flag.template sync<LMPHostType>();
+  k_warning_flag.sync_host();
   if (h_warning_flag())
-    error->warning(FLERR,"Dihedral problem",0);
+    error->warning(FLERR,"Dihedral problem");
 
   if (eflag_global) energy += ev.evdwl;
   if (vflag_global) {
@@ -178,12 +180,12 @@ void DihedralClass2Kokkos<DeviceType>::compute(int eflag_in, int vflag_in)
 
   if (eflag_atom) {
     k_eatom.template modify<DeviceType>();
-    k_eatom.template sync<LMPHostType>();
+    k_eatom.sync_host();
   }
 
   if (vflag_atom) {
     k_vatom.template modify<DeviceType>();
-    k_vatom.template sync<LMPHostType>();
+    k_vatom.sync_host();
   }
 
   copymode = 0;
@@ -197,7 +199,7 @@ KOKKOS_INLINE_FUNCTION
 void DihedralClass2Kokkos<DeviceType>::operator()(TagDihedralClass2Compute<NEWTON_BOND,EVFLAG>, const int &n, EV_FLOAT& ev) const {
 
   // The f array is atomic
-  Kokkos::View<F_FLOAT*[3], typename DAT::t_f_array::array_layout,DeviceType,Kokkos::MemoryTraits<Kokkos::Atomic|Kokkos::Unmanaged> > a_f = f;
+  Kokkos::View<F_FLOAT*[3], typename DAT::t_f_array::array_layout,typename KKDevice<DeviceType>::value,Kokkos::MemoryTraits<Kokkos::Atomic|Kokkos::Unmanaged> > a_f = f;
 
   const int i1 = dihedrallist(n,0);
   const int i2 = dihedrallist(n,1);
@@ -278,7 +280,7 @@ void DihedralClass2Kokkos<DeviceType>::operator()(TagDihedralClass2Compute<NEWTO
   // error check
 
   if ((c > 1.0 + TOLERANCE || c < (-1.0 - TOLERANCE)) && !d_warning_flag())
-    Kokkos::atomic_fetch_add(&d_warning_flag(),1);
+    d_warning_flag() = 1;
 
   if (c > 1.0) c = 1.0;
   if (c < -1.0) c = -1.0;
@@ -785,44 +787,44 @@ void DihedralClass2Kokkos<DeviceType>::coeff(int narg, char **arg)
     k_setflag_bb13t.h_view[i] = setflag_bb13t[i];
   }
 
-  k_k1.template modify<LMPHostType>();
-  k_k2.template modify<LMPHostType>();
-  k_k3.template modify<LMPHostType>();
-  k_phi1.template modify<LMPHostType>();
-  k_phi2.template modify<LMPHostType>();
-  k_phi3.template modify<LMPHostType>();
-  k_mbt_f1.template modify<LMPHostType>();
-  k_mbt_f2.template modify<LMPHostType>();
-  k_mbt_f3.template modify<LMPHostType>();
-  k_mbt_r0.template modify<LMPHostType>();
-  k_ebt_f1_1.template modify<LMPHostType>();
-  k_ebt_f2_1.template modify<LMPHostType>();
-  k_ebt_f3_1.template modify<LMPHostType>();
-  k_ebt_r0_1.template modify<LMPHostType>();
-  k_ebt_f1_2.template modify<LMPHostType>();
-  k_ebt_f2_2.template modify<LMPHostType>();
-  k_ebt_f3_2.template modify<LMPHostType>();
-  k_ebt_r0_2.template modify<LMPHostType>();
-  k_at_f1_1.template modify<LMPHostType>();
-  k_at_f2_1.template modify<LMPHostType>();
-  k_at_f3_1.template modify<LMPHostType>();
-  k_at_f1_2.template modify<LMPHostType>();
-  k_at_f2_2.template modify<LMPHostType>();
-  k_at_f3_2.template modify<LMPHostType>();
-  k_at_theta0_1.template modify<LMPHostType>();
-  k_at_theta0_2.template modify<LMPHostType>();
-  k_aat_k.template modify<LMPHostType>();
-  k_aat_theta0_1.template modify<LMPHostType>();
-  k_aat_theta0_2.template modify<LMPHostType>();
-  k_bb13t_k.template modify<LMPHostType>();
-  k_bb13t_r10.template modify<LMPHostType>();
-  k_bb13t_r30.template modify<LMPHostType>();
-  k_setflag_d.template modify<LMPHostType>();
-  k_setflag_mbt.template modify<LMPHostType>();
-  k_setflag_ebt.template modify<LMPHostType>();
-  k_setflag_at.template modify<LMPHostType>();
-  k_setflag_aat.template modify<LMPHostType>();
-  k_setflag_bb13t.template modify<LMPHostType>();
+  k_k1.modify_host();
+  k_k2.modify_host();
+  k_k3.modify_host();
+  k_phi1.modify_host();
+  k_phi2.modify_host();
+  k_phi3.modify_host();
+  k_mbt_f1.modify_host();
+  k_mbt_f2.modify_host();
+  k_mbt_f3.modify_host();
+  k_mbt_r0.modify_host();
+  k_ebt_f1_1.modify_host();
+  k_ebt_f2_1.modify_host();
+  k_ebt_f3_1.modify_host();
+  k_ebt_r0_1.modify_host();
+  k_ebt_f1_2.modify_host();
+  k_ebt_f2_2.modify_host();
+  k_ebt_f3_2.modify_host();
+  k_ebt_r0_2.modify_host();
+  k_at_f1_1.modify_host();
+  k_at_f2_1.modify_host();
+  k_at_f3_1.modify_host();
+  k_at_f1_2.modify_host();
+  k_at_f2_2.modify_host();
+  k_at_f3_2.modify_host();
+  k_at_theta0_1.modify_host();
+  k_at_theta0_2.modify_host();
+  k_aat_k.modify_host();
+  k_aat_theta0_1.modify_host();
+  k_aat_theta0_2.modify_host();
+  k_bb13t_k.modify_host();
+  k_bb13t_r10.modify_host();
+  k_bb13t_r30.modify_host();
+  k_setflag_d.modify_host();
+  k_setflag_mbt.modify_host();
+  k_setflag_ebt.modify_host();
+  k_setflag_at.modify_host();
+  k_setflag_aat.modify_host();
+  k_setflag_bb13t.modify_host();
 }
 
 
@@ -955,44 +957,44 @@ void DihedralClass2Kokkos<DeviceType>::read_restart(FILE *fp)
     k_setflag_bb13t.h_view[i] = setflag_bb13t[i];
   }
 
-  k_k1.template modify<LMPHostType>();
-  k_k2.template modify<LMPHostType>();
-  k_k3.template modify<LMPHostType>();
-  k_phi1.template modify<LMPHostType>();
-  k_phi2.template modify<LMPHostType>();
-  k_phi3.template modify<LMPHostType>();
-  k_mbt_f1.template modify<LMPHostType>();
-  k_mbt_f2.template modify<LMPHostType>();
-  k_mbt_f3.template modify<LMPHostType>();
-  k_mbt_r0.template modify<LMPHostType>();
-  k_ebt_f1_1.template modify<LMPHostType>();
-  k_ebt_f2_1.template modify<LMPHostType>();
-  k_ebt_f3_1.template modify<LMPHostType>();
-  k_ebt_r0_1.template modify<LMPHostType>();
-  k_ebt_f1_2.template modify<LMPHostType>();
-  k_ebt_f2_2.template modify<LMPHostType>();
-  k_ebt_f3_2.template modify<LMPHostType>();
-  k_ebt_r0_2.template modify<LMPHostType>();
-  k_at_f1_1.template modify<LMPHostType>();
-  k_at_f2_1.template modify<LMPHostType>();
-  k_at_f3_1.template modify<LMPHostType>();
-  k_at_f1_2.template modify<LMPHostType>();
-  k_at_f2_2.template modify<LMPHostType>();
-  k_at_f3_2.template modify<LMPHostType>();
-  k_at_theta0_1.template modify<LMPHostType>();
-  k_at_theta0_2.template modify<LMPHostType>();
-  k_aat_k.template modify<LMPHostType>();
-  k_aat_theta0_1.template modify<LMPHostType>();
-  k_aat_theta0_2.template modify<LMPHostType>();
-  k_bb13t_k.template modify<LMPHostType>();
-  k_bb13t_r10.template modify<LMPHostType>();
-  k_bb13t_r30.template modify<LMPHostType>();
-  k_setflag_d.template modify<LMPHostType>();
-  k_setflag_mbt.template modify<LMPHostType>();
-  k_setflag_ebt.template modify<LMPHostType>();
-  k_setflag_at.template modify<LMPHostType>();
-  k_setflag_aat.template modify<LMPHostType>();
-  k_setflag_bb13t.template modify<LMPHostType>();
+  k_k1.modify_host();
+  k_k2.modify_host();
+  k_k3.modify_host();
+  k_phi1.modify_host();
+  k_phi2.modify_host();
+  k_phi3.modify_host();
+  k_mbt_f1.modify_host();
+  k_mbt_f2.modify_host();
+  k_mbt_f3.modify_host();
+  k_mbt_r0.modify_host();
+  k_ebt_f1_1.modify_host();
+  k_ebt_f2_1.modify_host();
+  k_ebt_f3_1.modify_host();
+  k_ebt_r0_1.modify_host();
+  k_ebt_f1_2.modify_host();
+  k_ebt_f2_2.modify_host();
+  k_ebt_f3_2.modify_host();
+  k_ebt_r0_2.modify_host();
+  k_at_f1_1.modify_host();
+  k_at_f2_1.modify_host();
+  k_at_f3_1.modify_host();
+  k_at_f1_2.modify_host();
+  k_at_f2_2.modify_host();
+  k_at_f3_2.modify_host();
+  k_at_theta0_1.modify_host();
+  k_at_theta0_2.modify_host();
+  k_aat_k.modify_host();
+  k_aat_theta0_1.modify_host();
+  k_aat_theta0_2.modify_host();
+  k_bb13t_k.modify_host();
+  k_bb13t_r10.modify_host();
+  k_bb13t_r30.modify_host();
+  k_setflag_d.modify_host();
+  k_setflag_mbt.modify_host();
+  k_setflag_ebt.modify_host();
+  k_setflag_at.modify_host();
+  k_setflag_aat.modify_host();
+  k_setflag_bb13t.modify_host();
 }
 
 /* ----------------------------------------------------------------------
@@ -1015,8 +1017,8 @@ void DihedralClass2Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int i1, cons
   F_FLOAT v[6];
 
   // The eatom and vatom arrays are atomic
-  Kokkos::View<E_FLOAT*, typename DAT::t_efloat_1d::array_layout,DeviceType,Kokkos::MemoryTraits<Kokkos::Atomic|Kokkos::Unmanaged> > v_eatom = k_eatom.view<DeviceType>();
-  Kokkos::View<F_FLOAT*[6], typename DAT::t_virial_array::array_layout,DeviceType,Kokkos::MemoryTraits<Kokkos::Atomic|Kokkos::Unmanaged> > v_vatom = k_vatom.view<DeviceType>();
+  Kokkos::View<E_FLOAT*, typename DAT::t_efloat_1d::array_layout,typename KKDevice<DeviceType>::value,Kokkos::MemoryTraits<Kokkos::Atomic|Kokkos::Unmanaged> > v_eatom = k_eatom.view<DeviceType>();
+  Kokkos::View<F_FLOAT*[6], typename DAT::t_virial_array::array_layout,typename KKDevice<DeviceType>::value,Kokkos::MemoryTraits<Kokkos::Atomic|Kokkos::Unmanaged> > v_vatom = k_vatom.view<DeviceType>();
 
   if (eflag_either) {
     if (eflag_global) {
@@ -1131,7 +1133,7 @@ void DihedralClass2Kokkos<DeviceType>::ev_tally(EV_FLOAT &ev, const int i1, cons
 
 namespace LAMMPS_NS {
 template class DihedralClass2Kokkos<LMPDeviceType>;
-#ifdef KOKKOS_ENABLE_CUDA
+#ifdef LMP_KOKKOS_GPU
 template class DihedralClass2Kokkos<LMPHostType>;
 #endif
 }

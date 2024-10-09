@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -16,22 +17,23 @@
 ------------------------------------------------------------------------- */
 
 #include "compute_rdf.h"
-#include <mpi.h>
-#include <cmath>
-#include <cstring>
+
 #include "atom.h"
-#include "update.h"
-#include "force.h"
-#include "pair.h"
+#include "comm.h"
 #include "domain.h"
-#include "neighbor.h"
-#include "neigh_request.h"
-#include "neigh_list.h"
+#include "error.h"
+#include "force.h"
 #include "group.h"
 #include "math_const.h"
 #include "memory.h"
-#include "error.h"
-#include "comm.h"
+#include "neigh_list.h"
+#include "neigh_request.h"
+#include "neighbor.h"
+#include "pair.h"
+#include "update.h"
+
+#include <cmath>
+#include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
@@ -40,16 +42,16 @@ using namespace MathConst;
 
 ComputeRDF::ComputeRDF(LAMMPS *lmp, int narg, char **arg) :
   Compute(lmp, narg, arg),
-  rdfpair(NULL), nrdfpair(NULL), ilo(NULL), ihi(NULL), jlo(NULL), jhi(NULL),
-  hist(NULL), histall(NULL), typecount(NULL), icount(NULL), jcount(NULL),
-  duplicates(NULL)
+  rdfpair(nullptr), nrdfpair(nullptr), ilo(nullptr), ihi(nullptr), jlo(nullptr), jhi(nullptr),
+  hist(nullptr), histall(nullptr), typecount(nullptr), icount(nullptr), jcount(nullptr),
+  duplicates(nullptr)
 {
-  if (narg < 4) error->all(FLERR,"Illegal compute rdf command");
+  if (narg < 4) utils::missing_cmd_args(FLERR,"compute rdf", error);
 
   array_flag = 1;
   extarray = 0;
 
-  nbin = force->inumeric(FLERR,arg[3]);
+  nbin = utils::inumeric(FLERR,arg[3],false,lmp);
   if (nbin < 1) error->all(FLERR,"Illegal compute rdf command");
 
   // optional args
@@ -65,12 +67,14 @@ ComputeRDF::ComputeRDF(LAMMPS *lmp, int narg, char **arg) :
 
   while (iarg < narg) {
     if (strcmp(arg[iarg],"cutoff") == 0) {
-      if (iarg+2 > narg) error->all(FLERR,"Illegal compute rdf command");
-      cutoff_user = force->numeric(FLERR,arg[iarg+1]);
+      if (iarg+2 > narg) utils::missing_cmd_args(FLERR,"compute rdf cutoff", error);
+      if ((neighbor->style == Neighbor::MULTI) || (neighbor->style == Neighbor::MULTI_OLD))
+        error->all(FLERR, "Compute rdf with custom cutoff requires neighbor style 'bin' or 'nsq'");
+      cutoff_user = utils::numeric(FLERR,arg[iarg+1],false,lmp);
       if (cutoff_user <= 0.0) cutflag = 0;
       else cutflag = 1;
       iarg += 2;
-    } else error->all(FLERR,"Illegal compute rdf command");
+    } else error->all(FLERR,"Unknown compute rdf keyword {}", arg[iarg]);
   }
 
   // pairwise args
@@ -92,16 +96,26 @@ ComputeRDF::ComputeRDF(LAMMPS *lmp, int narg, char **arg) :
   jlo = new int[npairs];
   jhi = new int[npairs];
 
-  if (nargpair == 0) {
+  if (!nargpair) {
     ilo[0] = 1; ihi[0] = ntypes;
     jlo[0] = 1; jhi[0] = ntypes;
   } else {
     iarg = 4;
     for (int ipair = 0; ipair < npairs; ipair++) {
-      force->bounds(FLERR,arg[iarg],atom->ntypes,ilo[ipair],ihi[ipair]);
-      force->bounds(FLERR,arg[iarg+1],atom->ntypes,jlo[ipair],jhi[ipair]);
-      if (ilo[ipair] > ihi[ipair] || jlo[ipair] > jhi[ipair])
-        error->all(FLERR,"Illegal compute rdf command");
+      utils::bounds_typelabel(FLERR, arg[iarg], 1, atom->ntypes, ilo[ipair], ihi[ipair], lmp, Atom::ATOM);
+      utils::bounds_typelabel(FLERR, arg[iarg+1], 1, atom->ntypes, jlo[ipair], jhi[ipair], lmp, Atom::ATOM);
+
+      // switch i,j if i > j, if wildcards were not used
+
+      if ( (ilo[ipair] == ihi[ipair]) &&
+           (jlo[ipair] == jhi[ipair]) &&
+           (ilo[ipair] > jlo[ipair]) ) {
+        jlo[ipair] = ihi[ipair];
+        ilo[ipair] = jhi[ipair];
+        ihi[ipair] = ilo[ipair];
+        jhi[ipair] = jlo[ipair];
+      }
+
       iarg += 2;
     }
   }
@@ -137,17 +151,17 @@ ComputeRDF::~ComputeRDF()
 {
   memory->destroy(rdfpair);
   memory->destroy(nrdfpair);
-  delete [] ilo;
-  delete [] ihi;
-  delete [] jlo;
-  delete [] jhi;
+  delete[] ilo;
+  delete[] ihi;
+  delete[] jlo;
+  delete[] jhi;
   memory->destroy(hist);
   memory->destroy(histall);
   memory->destroy(array);
-  delete [] typecount;
-  delete [] icount;
-  delete [] jcount;
-  delete [] duplicates;
+  delete[] typecount;
+  delete[] icount;
+  delete[] jcount;
+  delete[] duplicates;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -156,8 +170,7 @@ void ComputeRDF::init()
 {
 
   if (!force->pair && !cutflag)
-    error->all(FLERR,"Compute rdf requires a pair style be defined "
-               "or cutoff specified");
+    error->all(FLERR,"Compute rdf requires a pair style or an explicit cutoff");
 
   if (cutflag) {
     double skin = neighbor->skin;
@@ -202,13 +215,11 @@ void ComputeRDF::init()
   //   (until next reneighbor), so it needs to contain atoms further
   //   than cutoff_user apart, just like a normal neighbor list does
 
-  int irequest = neighbor->request(this,instance_me);
-  neighbor->requests[irequest]->pair = 0;
-  neighbor->requests[irequest]->compute = 1;
-  neighbor->requests[irequest]->occasional = 1;
+  auto req = neighbor->add_request(this, NeighConst::REQ_OCCASIONAL);
   if (cutflag) {
-    neighbor->requests[irequest]->cut = 1;
-    neighbor->requests[irequest]->cutoff = mycutneigh;
+    if ((neighbor->style == Neighbor::MULTI) || (neighbor->style == Neighbor::MULTI_OLD))
+      error->all(FLERR, "Compute rdf with custom cutoff requires neighbor style 'bin' or 'nsq'");
+    req->set_cutoff(mycutneigh);
   }
 }
 
@@ -258,7 +269,7 @@ void ComputeRDF::init_norm()
   for (i = 0; i < npairs; i++) jcount[i] = scratch[i];
   MPI_Allreduce(duplicates,scratch,npairs,MPI_INT,MPI_SUM,world);
   for (i = 0; i < npairs; i++) duplicates[i] = scratch[i];
-  delete [] scratch;
+  delete[] scratch;
 }
 
 /* ---------------------------------------------------------------------- */

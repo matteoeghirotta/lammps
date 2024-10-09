@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,37 +13,32 @@
 ------------------------------------------------------------------------- */
 
 /* ----------------------------------------------------------------------
-   Contributing author: Stan Moore (SNL)
+   Contributing authors: Stan Moore (SNL)
+                         Mitch Murphy (alphataubio@gmail.com)
 ------------------------------------------------------------------------- */
 
 #include "fix_nh_kokkos.h"
-#include <cstring>
-#include <cstdlib>
-#include <cmath>
-#include "math_extra.h"
-#include "atom.h"
-#include "force.h"
-#include "group.h"
-#include "comm.h"
-#include "neighbor.h"
-#include "irregular.h"
-#include "modify.h"
-#include "fix_deform.h"
-#include "compute.h"
-#include "kspace.h"
-#include "update.h"
-#include "respa.h"
-#include "domain_kokkos.h"
-#include "memory_kokkos.h"
-#include "error.h"
-#include "atom_masks.h"
+
 #include "atom_kokkos.h"
+#include "atom_masks.h"
+#include "compute.h"
+#include "domain_kokkos.h"
+#include "error.h"
+#include "force.h"
+#include "irregular.h"
+#include "kspace.h"
+#include "neighbor.h"
+#include "update.h"
+
+#include <cmath>
+#include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
-#define DELTAFLIP 0.1
-#define TILTMAX 1.5
+static constexpr double DELTAFLIP = 0.1;
+static constexpr double TILTMAX = 1.5;
+static constexpr double EPSILON = 1.0e-6;
 
 enum{NOBIAS,BIAS};
 enum{NONE,XYZ,XY,YZ,XZ};
@@ -56,20 +52,12 @@ template<class DeviceType>
 FixNHKokkos<DeviceType>::FixNHKokkos(LAMMPS *lmp, int narg, char **arg) : FixNH(lmp, narg, arg)
 {
   kokkosable = 1;
+  atomKK = (AtomKokkos *)atom;
   domainKK = (DomainKokkos *) domain;
   execution_space = ExecutionSpaceFromDevice<DeviceType>::space;
 
   datamask_read = EMPTY_MASK;
   datamask_modify = EMPTY_MASK;
-}
-
-/* ---------------------------------------------------------------------- */
-
-template<class DeviceType>
-FixNHKokkos<DeviceType>::~FixNHKokkos()
-{
-
-
 }
 
 /* ---------------------------------------------------------------------- */
@@ -88,8 +76,17 @@ void FixNHKokkos<DeviceType>::init()
 ------------------------------------------------------------------------- */
 
 template<class DeviceType>
-void FixNHKokkos<DeviceType>::setup(int vflag)
+void FixNHKokkos<DeviceType>::setup(int /*vflag*/)
 {
+  // tdof needed by compute_temp_target()
+
+  atomKK->sync(temperature->execution_space,temperature->datamask_read);
+  t_current = temperature->compute_scalar();
+  atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+  atomKK->sync(execution_space,temperature->datamask_modify);
+
+  tdof = temperature->dof;
+
   // t_target is needed by NPH and NPT in compute_scalar()
   // If no thermostat or using fix nphug,
   // t_target must be defined by other means.
@@ -99,18 +96,22 @@ void FixNHKokkos<DeviceType>::setup(int vflag)
   } else if (pstat_flag) {
 
     // t0 = reference temperature for masses
+    // set equal to either ptemp or the current temperature
     // cannot be done in init() b/c temperature cannot be called there
     // is b/c Modify::init() inits computes after fixes due to dof dependence
-    // guesstimate a unit-dependent t0 if actual T = 0.0
+    // error if T less than 1e-6
     // if it was read in from a restart file, leave it be
 
     if (t0 == 0.0) {
-      atomKK->sync(temperature->execution_space,temperature->datamask_read);
-      t0 = temperature->compute_scalar();
-      atomKK->modified(temperature->execution_space,temperature->datamask_modify);
-      if (t0 == 0.0) {
-        if (strcmp(update->unit_style,"lj") == 0) t0 = 1.0;
-        else t0 = 300.0;
+      if (p_temp_flag) {
+        t0 = p_temp;
+      } else {
+        atomKK->sync(temperature->execution_space,temperature->datamask_read);
+        t0 = temperature->compute_scalar();
+        atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+        atomKK->sync(execution_space,temperature->datamask_modify);
+        if (t0 < EPSILON)
+          error->all(FLERR,"Current temperature too close to zero, consider using ptemp keyword");
       }
     }
     t_target = t0;
@@ -121,6 +122,8 @@ void FixNHKokkos<DeviceType>::setup(int vflag)
   atomKK->sync(temperature->execution_space,temperature->datamask_read);
   t_current = temperature->compute_scalar();
   atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+  atomKK->sync(execution_space,temperature->datamask_modify);
+
   tdof = temperature->dof;
 
   if (pstat_flag) {
@@ -179,7 +182,7 @@ void FixNHKokkos<DeviceType>::setup(int vflag)
 ------------------------------------------------------------------------- */
 
 template<class DeviceType>
-void FixNHKokkos<DeviceType>::initial_integrate(int vflag)
+void FixNHKokkos<DeviceType>::initial_integrate(int /*vflag*/)
 {
   // update eta_press_dot
 
@@ -198,9 +201,7 @@ void FixNHKokkos<DeviceType>::initial_integrate(int vflag)
 
   if (pstat_flag) {
     atomKK->sync(temperature->execution_space,temperature->datamask_read);
-    atomKK->modified(temperature->execution_space,temperature->datamask_modify);
-    //atomKK->sync(pressure->execution_space,pressure->datamask_read);
-    //atomKK->modified(pressure->execution_space,pressure->datamask_modify);
+    atomKK->sync(pressure->execution_space,pressure->datamask_read);
     if (pstyle == ISO) {
       temperature->compute_scalar();
       pressure->compute_scalar();
@@ -208,6 +209,10 @@ void FixNHKokkos<DeviceType>::initial_integrate(int vflag)
       temperature->compute_vector();
       pressure->compute_vector();
     }
+    atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+    atomKK->modified(pressure->execution_space,pressure->datamask_modify);
+    atomKK->sync(execution_space,temperature->datamask_modify);
+    atomKK->sync(execution_space,pressure->datamask_modify);
     couple();
     pressure->addstep(update->ntimestep+1);
   }
@@ -254,6 +259,7 @@ void FixNHKokkos<DeviceType>::final_integrate()
     atomKK->sync(temperature->execution_space,temperature->datamask_read);
     t_current = temperature->compute_scalar();
     atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+    atomKK->sync(execution_space,temperature->datamask_modify);
   }
 
   if (pstat_flag) nh_v_press();
@@ -264,15 +270,24 @@ void FixNHKokkos<DeviceType>::final_integrate()
   atomKK->sync(temperature->execution_space,temperature->datamask_read);
   t_current = temperature->compute_scalar();
   atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+  atomKK->sync(execution_space,temperature->datamask_modify);
   tdof = temperature->dof;
 
   if (pstat_flag) {
-    //atomKK->sync(pressure->execution_space,pressure->datamask_read);
-    //atomKK->modified(pressure->execution_space,pressure->datamask_modify);
-    if (pstyle == ISO) pressure->compute_scalar();
-    else {
+    if (pstyle == ISO) {
+      atomKK->sync(pressure->execution_space,pressure->datamask_read);
+      pressure->compute_scalar();
+      atomKK->modified(pressure->execution_space,pressure->datamask_modify);
+      atomKK->sync(execution_space,pressure->datamask_modify);
+    } else {
+      atomKK->sync(temperature->execution_space,temperature->datamask_read);
+      atomKK->sync(pressure->execution_space,pressure->datamask_read);
       temperature->compute_vector();
       pressure->compute_vector();
+      atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+      atomKK->modified(pressure->execution_space,pressure->datamask_modify);
+      atomKK->sync(execution_space,temperature->datamask_modify);
+      atomKK->sync(execution_space,pressure->datamask_modify);
     }
     couple();
     pressure->addstep(update->ntimestep+1);
@@ -308,18 +323,18 @@ void FixNHKokkos<DeviceType>::remap()
 
   // convert pertinent atoms and rigid bodies to lamda coords
 
-  domainKK->x2lamda(nlocal);
-  //if (allremap) domainKK->x2lamda(nlocal);
-  //else {
-  //  for (i = 0; i < nlocal; i++)
-  //    if (mask[i] & dilate_group_bit)
-  //      domain->x2lamda(x[i],x[i]);
-  //}
+  x = atomKK->k_x.template view<DeviceType>();
 
-  if (nrigid)
+  if (allremap) domainKK->x2lamda(nlocal);
+  else {
+    for ( int i = 0; i < nlocal; i++)
+      if (mask[i] & dilate_group_bit)
+        domainKK->x2lamda(&x(i,0), &x(i,0));
+  }
+
+  if (rfix.size() > 0)
     error->all(FLERR,"Cannot (yet) use rigid bodies with fix nh and Kokkos");
-    //for (i = 0; i < nrigid; i++)
-    //  modify->fix[rfix[i]]->deform(0);
+  // for (auto &ifix : rfix) ifix->deform(0);
 
   // reset global and local box to new size/shape
 
@@ -457,17 +472,14 @@ void FixNHKokkos<DeviceType>::remap()
 
   // convert pertinent atoms and rigid bodies back to box coords
 
-  domainKK->lamda2x(nlocal);
-  //if (allremap) domainKK->lamda2x(nlocal);
-  //else {
-  //  for (i = 0; i < nlocal; i++)
-  //    if (mask[i] & dilate_group_bit)
-  //      domain->lamda2x(x[i],x[i]);
-  //}
+  if (allremap) domainKK->lamda2x(nlocal);
+  else {
+    for ( int i = 0; i < nlocal; i++)
+      if (mask[i] & dilate_group_bit)
+        domainKK->lamda2x(&x(i,0), &x(i,0));
+  }
 
-  //if (nrigid)
-  //  for (i = 0; i < nrigid; i++)
-  //    modify->fix[rfix[i]]->deform(1);
+  // for (auto &ifix : rfix) ifix->deform(1);
 }
 
 /* ----------------------------------------------------------------------
@@ -487,9 +499,13 @@ void FixNHKokkos<DeviceType>::nh_v_press()
   factor[2] = exp(-dt4*(omega_dot[2]+mtk_term2));
 
   if (which == BIAS) {
-    atomKK->sync(temperature->execution_space,temperature->datamask_read);
-    temperature->remove_bias_all();
-    atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+    if (temperature->kokkosable) temperature->remove_bias_all_kk();
+    else {
+      atomKK->sync(temperature->execution_space,temperature->datamask_read);
+      temperature->remove_bias_all();
+      atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+      atomKK->sync(execution_space,temperature->datamask_modify);
+    }
   }
 
   atomKK->sync(execution_space,V_MASK | MASK_MASK);
@@ -504,11 +520,14 @@ void FixNHKokkos<DeviceType>::nh_v_press()
   atomKK->modified(execution_space,V_MASK);
 
   if (which == BIAS) {
-    atomKK->sync(temperature->execution_space,temperature->datamask_read);
-    temperature->restore_bias_all();
-    atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+    if (temperature->kokkosable) temperature->restore_bias_all();
+    else {
+      atomKK->sync(temperature->execution_space,temperature->datamask_read);
+      temperature->restore_bias_all();
+      atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+      atomKK->sync(execution_space,temperature->datamask_modify);
+    }
   }
-
 }
 
 template<class DeviceType>
@@ -624,9 +643,13 @@ void FixNHKokkos<DeviceType>::nh_v_temp()
   if (igroup == atomKK->firstgroup) nlocal = atomKK->nfirst;
 
   if (which == BIAS) {
-    atomKK->sync(temperature->execution_space,temperature->datamask_read);
-    temperature->remove_bias_all();
-    atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+    if (temperature->kokkosable) temperature->remove_bias_all_kk();
+    else {
+      atomKK->sync(temperature->execution_space,temperature->datamask_read);
+      temperature->remove_bias_all();
+      atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+      atomKK->sync(execution_space,temperature->datamask_modify);
+    }
   }
 
   atomKK->sync(execution_space,V_MASK | MASK_MASK);
@@ -638,9 +661,13 @@ void FixNHKokkos<DeviceType>::nh_v_temp()
   atomKK->modified(execution_space,V_MASK);
 
   if (which == BIAS) {
-    atomKK->sync(temperature->execution_space,temperature->datamask_read);
-    temperature->restore_bias_all();
-    atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+    if (temperature->kokkosable) temperature->restore_bias_all();
+    else {
+      atomKK->sync(temperature->execution_space,temperature->datamask_read);
+      temperature->restore_bias_all();
+      atomKK->modified(temperature->execution_space,temperature->datamask_modify);
+      atomKK->sync(execution_space,temperature->datamask_modify);
+    }
   }
 }
 
@@ -735,8 +762,7 @@ void FixNHKokkos<DeviceType>::pre_exchange()
 
 namespace LAMMPS_NS {
 template class FixNHKokkos<LMPDeviceType>;
-#ifdef KOKKOS_ENABLE_CUDA
+#ifdef LMP_KOKKOS_GPU
 template class FixNHKokkos<LMPHostType>;
 #endif
 }
-

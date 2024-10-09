@@ -9,7 +9,7 @@ cross-platform, text-based molecule and topology builder for LAMMPS.
 Moltemplate was originally conceived for building custom coarse-grained
 molecular models, but it has since been generalized for all-atom simulations
 as well.  It currently supports the OPLS, COMPASS, AMBER(GAFF,GAFF2),
-MARTINI, SDK, LOPLS(2015), and TraPPE(1998) force fields, and includes
+MARTINI, SPICA(SDK), LOPLS(2015), and TraPPE(1998) force fields, and includes
 (New force fields and examples are added continually through user
 contributions).
 
@@ -27,6 +27,12 @@ The most up-to-date version is usually available through GitHub
 Documentation, examples, and supporting code can be downloaded at:
 
 http://www.moltemplate.org
+
+
+## Tutorial files
+
+The folder tutorial-files contains the files used in the "Moltemplate Howto"
+in the LAMMPS manual.
 
 ## Requirements
 
@@ -51,7 +57,7 @@ e.g. via:
 
 Updates to this distribution method are less frequent, than others, so if
 you need a more recent version, you can download it as a .tar.gz or .zip
-archive from the moltemplate home page or GitHub (see linke above). After
+archive from the moltemplate home page or GitHub (see link above). After
 downloading an archive and unpacking it, you should have 3 folders.
 
     moltemplate/                  <-- source code and force fields
@@ -65,7 +71,7 @@ the unpacked source archive:
     pip install . --user
 
 If you want to install into a system folder, then you need to run pip with
-superuser priviledges. e.g. with:
+superuser privileges. e.g. with:
 
     sudo pip install .
 

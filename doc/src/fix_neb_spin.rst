@@ -6,8 +6,7 @@ fix neb/spin command
 Syntax
 """"""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    fix ID group-ID neb/spin Kspring
 
@@ -22,7 +21,9 @@ Syntax
 Examples
 """"""""
 
-fix 1 active neb/spin 1.0
+.. code-block:: LAMMPS
+
+   fix 1 active neb/spin 1.0
 
 Description
 """""""""""
@@ -43,10 +44,11 @@ energy relaxes toward the saddle point (i.e. the point of highest energy
 along the MEP), and a second relaxation is performed.
 
 The nudging forces are calculated as explained in
-:ref:`(BessarabB) <BessarabB>`).
+:ref:`(Bessarab) <BessarabB>`).
 See this reference for more explanation about their expression.
 
-**Restart, fix\_modify, output, run start/stop, minimize info:**
+Restart, fix_modify, output, run start/stop, minimize info
+"""""""""""""""""""""""""""""""""""""""""""""""""""""""""""
 
 No information about this fix is written to :doc:`binary restart files <restart>`.  None of the :doc:`fix_modify <fix_modify>` options
 are relevant to this fix.  No global or per-atom quantities are stored
@@ -60,7 +62,6 @@ as invoked by the :doc:`minimize <minimize>` command via the
 
 Restrictions
 """"""""""""
-
 
 This command can only be used if LAMMPS was built with the SPIN
 package.  See the :doc:`Build package <Build_package>` doc
@@ -76,13 +77,9 @@ Default
 
 none
 
-
 ----------
-
 
 .. _BessarabB:
 
-
-
-**(BessarabB)** Bessarab, Uzdin, Jonsson, Comp Phys Comm, 196,
+**(Bessarab)** Bessarab, Uzdin, Jonsson, Comp Phys Comm, 196,
 335-347 (2015).

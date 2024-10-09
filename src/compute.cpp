@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,21 +13,20 @@
 ------------------------------------------------------------------------- */
 
 #include "compute.h"
-#include <cstring>
-#include <cctype>
-#include "domain.h"
-#include "force.h"
-#include "group.h"
-#include "modify.h"
-#include "fix.h"
+
 #include "atom_masks.h"
-#include "memory.h"
+#include "domain.h"
 #include "error.h"
+#include "fix.h"
+#include "group.h"
+#include "memory.h"
+#include "modify.h"
+
+#include <cstring>
 
 using namespace LAMMPS_NS;
 
-#define DELTA 4
-#define BIG MAXTAGINT
+static constexpr int DELTA = 4;
 
 // allocate space for static class instance variable and initialize it
 
@@ -35,11 +35,9 @@ int Compute::instance_total = 0;
 /* ---------------------------------------------------------------------- */
 
 Compute::Compute(LAMMPS *lmp, int narg, char **arg) :
-  Pointers(lmp),
-  id(NULL), style(NULL),
-  vector(NULL), array(NULL), vector_atom(NULL),
-  array_atom(NULL), vector_local(NULL), array_local(NULL), extlist(NULL),
-  tlist(NULL), vbiasall(NULL)
+  Pointers(lmp), id(nullptr), style(nullptr), vector(nullptr), array(nullptr),
+  vector_atom(nullptr), array_atom(nullptr), vector_local(nullptr), array_local(nullptr),
+  extlist(nullptr), tlist(nullptr), vbiasall(nullptr)
 {
   instance_me = instance_total++;
 
@@ -48,48 +46,44 @@ Compute::Compute(LAMMPS *lmp, int narg, char **arg) :
   // compute ID, group, and style
   // ID must be all alphanumeric chars or underscores
 
-  int n = strlen(arg[0]) + 1;
-  id = new char[n];
-  strcpy(id,arg[0]);
-
-  for (int i = 0; i < n-1; i++)
-    if (!isalnum(id[i]) && id[i] != '_')
-      error->all(FLERR,
-                 "Compute ID must be alphanumeric or underscore characters");
+  id = utils::strdup(arg[0]);
+  if (!utils::is_id(id))
+    error->all(FLERR,"Compute ID must be alphanumeric or underscore characters");
 
   igroup = group->find(arg[1]);
   if (igroup == -1) error->all(FLERR,"Could not find compute group ID");
   groupbit = group->bitmask[igroup];
 
-  n = strlen(arg[2]) + 1;
-  style = new char[n];
-  strcpy(style,arg[2]);
+  style = utils::strdup(arg[2]);
 
   // set child class defaults
 
   scalar_flag = vector_flag = array_flag = 0;
-  peratom_flag = local_flag = 0;
+  extscalar = extvector = extarray = -1;
+  peratom_flag = local_flag = pergrid_flag = 0;
   size_vector_variable = size_array_rows_variable = 0;
 
   tempflag = pressflag = peflag = 0;
   pressatomflag = peatomflag = 0;
   create_attribute = 0;
   tempbias = 0;
+  scalar = 0.0;
 
   timeflag = 0;
   comm_forward = comm_reverse = 0;
   dynamic = 0;
   dynamic_group_allow = 1;
 
+  initialized_flag = 0;
   invoked_scalar = invoked_vector = invoked_array = -1;
   invoked_peratom = invoked_local = -1;
-  invoked_flag = 0;
+  invoked_flag = INVOKED_NONE;
 
   // set modify defaults
 
   extra_dof = domain->dimension;
   dynamic_user = 0;
-  fix_dof = 0;
+  fix_dof = 0.0;
 
   // setup list of timesteps
 
@@ -102,6 +96,7 @@ Compute::Compute(LAMMPS *lmp, int narg, char **arg) :
   datamask_modify = ALL_MASK;
 
   copymode = 0;
+  kokkosable = 0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -110,9 +105,28 @@ Compute::~Compute()
 {
   if (copymode) return;
 
-  delete [] id;
-  delete [] style;
+  delete[] id;
+  delete[] style;
   memory->destroy(tlist);
+}
+
+/* ---------------------------------------------------------------------- */
+
+void Compute::init_flags()
+{
+  initialized_flag = 1;
+  invoked_scalar = invoked_vector = invoked_array = -1;
+  invoked_peratom = invoked_local = -1;
+
+  if (scalar_flag && (extscalar < 0))
+    error->all(FLERR, "Must set 'extscalar' when setting 'scalar_flag' for compute {}.  "
+               "Contact the developer.", style);
+  if (vector_flag && (extvector < 0) && !extlist)
+    error->all(FLERR, "Must set 'extvector' or 'extlist' when setting 'vector_flag' for compute {}.  "
+               "Contact the developer.", style);
+  if (array_flag && (extarray < 0))
+    error->all(FLERR, "Must set 'extarray' when setting 'array_flag' for compute {}.  "
+               "Contact the developer.", style);
 }
 
 /* ---------------------------------------------------------------------- */
@@ -128,14 +142,12 @@ void Compute::modify_params(int narg, char **arg)
     if (strcmp(arg[iarg],"extra") == 0 ||
         strcmp(arg[iarg],"extra/dof") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal compute_modify command");
-      extra_dof = force->numeric(FLERR,arg[iarg+1]);
+      extra_dof = utils::numeric(FLERR,arg[iarg+1],false,lmp);
       iarg += 2;
     } else if (strcmp(arg[iarg],"dynamic") == 0 ||
                strcmp(arg[iarg],"dynamic/dof") == 0) {
       if (iarg+2 > narg) error->all(FLERR,"Illegal compute_modify command");
-      if (strcmp(arg[iarg+1],"no") == 0) dynamic_user = 0;
-      else if (strcmp(arg[iarg+1],"yes") == 0) dynamic_user = 1;
-      else error->all(FLERR,"Illegal compute_modify command");
+      dynamic_user = utils::logical(FLERR,arg[iarg+1],false,lmp);
       iarg += 2;
     } else error->all(FLERR,"Illegal compute_modify command");
   }
@@ -147,13 +159,10 @@ void Compute::modify_params(int narg, char **arg)
 
 void Compute::adjust_dof_fix()
 {
-  Fix **fix = modify->fix;
-  int nfix = modify->nfix;
-
   fix_dof = 0;
-  for (int i = 0; i < nfix; i++)
-    if (fix[i]->dof_flag)
-      fix_dof += fix[i]->dof(igroup);
+  for (auto &ifix : modify->get_fix_list())
+    if (ifix->dof_flag)
+      fix_dof += ifix->dof(igroup);
 }
 
 /* ----------------------------------------------------------------------

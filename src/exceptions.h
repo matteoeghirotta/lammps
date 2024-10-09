@@ -1,7 +1,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -14,45 +14,35 @@
 #ifndef LMP_EXCEPTIONS_H
 #define LMP_EXCEPTIONS_H
 
+#include <exception>
 #include <mpi.h>
 #include <string>
-#include <exception>
 
 namespace LAMMPS_NS {
 
-class LAMMPSException : public std::exception
-{
-public:
+class LAMMPSException : public std::exception {
+ public:
+  LAMMPSException(const std::string &msg) : message(msg) {}
+  const char *what() const noexcept override { return message.c_str(); }
+
+ protected:
   std::string message;
-
-  LAMMPSException(std::string msg) : message(msg) {
-  }
-
-  ~LAMMPSException() throw() {
-  }
-
-  virtual const char * what() const throw() {
-    return message.c_str();
-  }
 };
 
 class LAMMPSAbortException : public LAMMPSException {
-public:
-  MPI_Comm universe;
-
-  LAMMPSAbortException(std::string msg, MPI_Comm universe) :
-    LAMMPSException(msg),
-    universe(universe)
+ public:
+  LAMMPSAbortException(const std::string &msg, MPI_Comm _universe) :
+      LAMMPSException(msg), universe(_universe)
   {
   }
+  MPI_Comm get_universe() const { return universe; }
+
+ protected:
+  MPI_Comm universe;
 };
 
-enum ErrorType {
-   ERROR_NONE   = 0,
-   ERROR_NORMAL = 1,
-   ERROR_ABORT  = 2
-};
+enum ErrorType { ERROR_NONE = 0, ERROR_NORMAL = 1, ERROR_ABORT = 2 };
 
-}
+}    // namespace LAMMPS_NS
 
 #endif

@@ -11,26 +11,23 @@
 
 #include "colvarmodule.h"
 #include "colvarvalue.h"
-#include "colvarparse.h"
 #include "colvar.h"
 #include "colvarcomp.h"
 
 
-//////////////////////////////////////////////////////////////////////
-// alpha component
-//////////////////////////////////////////////////////////////////////
-
-colvar::alpha_angles::alpha_angles(std::string const &conf)
-  : cvc(conf)
+colvar::alpha_angles::alpha_angles()
 {
-  if (cvm::debug())
-    cvm::log("Initializing alpha_angles object.\n");
-
-  function_type = "alpha_angles";
+  set_function_type("alpha");
   enable(f_cvc_explicit_gradient);
   x.type(colvarvalue::type_scalar);
-
   colvarproxy *proxy = cvm::main()->proxy;
+  r0 = proxy->angstrom_to_internal(3.3);
+}
+
+
+int colvar::alpha_angles::init(std::string const &conf)
+{
+  int error_code = cvc::init(conf);
 
   std::string segment_id;
   get_keyval(conf, "psfSegID", segment_id, std::string("MAIN"));
@@ -51,29 +48,29 @@ colvar::alpha_angles::alpha_angles(std::string const &conf)
         }
       }
     } else {
-      cvm::error("Error: no residues defined in \"residueRange\".\n");
-      return;
+      error_code |=
+          cvm::error("Error: no residues defined in \"residueRange\".\n", COLVARS_INPUT_ERROR);
     }
   }
 
   if (residues.size() < 5) {
-    cvm::error("Error: not enough residues defined in \"residueRange\".\n");
-    return;
+    error_code |= cvm::error("Error: not enough residues defined in \"residueRange\".\n",
+                             COLVARS_INPUT_ERROR);
   }
 
   std::string const &sid    = segment_id;
   std::vector<int> const &r = residues;
 
 
-  get_keyval(conf, "hBondCoeff", hb_coeff, 0.5);
-  if ( (hb_coeff < 0.0) || (hb_coeff > 1.0) ) {
-    cvm::error("Error: hBondCoeff must be defined between 0 and 1.\n");
-    return;
+  get_keyval(conf, "hBondCoeff", hb_coeff, hb_coeff);
+  if ((hb_coeff < 0.0) || (hb_coeff > 1.0)) {
+    error_code |=
+        cvm::error("Error: hBondCoeff must be defined between 0 and 1.\n", COLVARS_INPUT_ERROR);
   }
 
 
-  get_keyval(conf, "angleRef", theta_ref, 88.0);
-  get_keyval(conf, "angleTol", theta_tol, 15.0);
+  get_keyval(conf, "angleRef", theta_ref, theta_ref);
+  get_keyval(conf, "angleTol", theta_tol, theta_tol);
 
   if (hb_coeff < 1.0) {
 
@@ -91,11 +88,9 @@ colvar::alpha_angles::alpha_angles(std::string const &conf)
   }
 
   {
-    cvm::real r0;
-    size_t en, ed;
-    get_keyval(conf, "hBondCutoff",   r0, (3.3 * proxy->angstrom_value));
-    get_keyval(conf, "hBondExpNumer", en, 6);
-    get_keyval(conf, "hBondExpDenom", ed, 8);
+    get_keyval(conf, "hBondCutoff",   r0, r0);
+    get_keyval(conf, "hBondExpNumer", en, en);
+    get_keyval(conf, "hBondExpDenom", ed, ed);
 
     if (hb_coeff > 0.0) {
 
@@ -111,17 +106,7 @@ colvar::alpha_angles::alpha_angles(std::string const &conf)
     }
   }
 
-  if (cvm::debug())
-    cvm::log("Done initializing alpha_angles object.\n");
-}
-
-
-colvar::alpha_angles::alpha_angles()
-  : cvc()
-{
-  function_type = "alpha_angles";
-  enable(f_cvc_explicit_gradient);
-  x.type(colvarvalue::type_scalar);
+  return error_code;
 }
 
 
@@ -210,7 +195,7 @@ void colvar::alpha_angles::collect_gradients(std::vector<int> const &atom_ids, s
         1.0/(1.0 - (t*t*t*t)) *
         ( (-2.0 * t) + (-1.0*f)*(-4.0 * (t*t*t)) );
 
-      // Coeficient of this CVC's gradient in the colvar gradient, times coefficient of this
+      // Coefficient of this CVC's gradient in the colvar gradient, times coefficient of this
       // angle's gradient in the CVC's gradient
       cvm::real const coeff = cvc_coeff * theta_norm * dfdt * (1.0/theta_tol);
 
@@ -230,7 +215,7 @@ void colvar::alpha_angles::collect_gradients(std::vector<int> const &atom_ids, s
     cvm::real const hb_norm = hb_coeff / cvm::real(hb.size());
 
     for (size_t i = 0; i < hb.size(); i++) {
-      // Coeficient of this CVC's gradient in the colvar gradient, times coefficient of this
+      // Coefficient of this CVC's gradient in the colvar gradient, times coefficient of this
       // hbond's gradient in the CVC's gradient
       cvm::real const coeff = cvc_coeff * 0.5 * hb_norm;
 
@@ -283,24 +268,27 @@ void colvar::alpha_angles::apply_force(colvarvalue const &force)
 }
 
 
-simple_scalar_dist_functions(alpha_angles)
-
 
 
 //////////////////////////////////////////////////////////////////////
 // dihedral principal component
 //////////////////////////////////////////////////////////////////////
 
-colvar::dihedPC::dihedPC(std::string const &conf)
-  : cvc(conf)
+colvar::dihedPC::dihedPC()
 {
-  if (cvm::debug())
-    cvm::log("Initializing dihedral PC object.\n");
-
-  function_type = "dihedPC";
+  set_function_type("dihedPC");
   // Supported through references to atom groups of children cvcs
   enable(f_cvc_explicit_gradient);
   x.type(colvarvalue::type_scalar);
+}
+
+
+int colvar::dihedPC::init(std::string const &conf)
+{
+  int error_code = cvc::init(conf);
+
+  if (cvm::debug())
+    cvm::log("Initializing dihedral PC object.\n");
 
   std::string segment_id;
   get_keyval(conf, "psfSegID", segment_id, std::string("MAIN"));
@@ -321,14 +309,14 @@ colvar::dihedPC::dihedPC(std::string const &conf)
         }
       }
     } else {
-      cvm::error("Error: no residues defined in \"residueRange\".\n");
-      return;
+      error_code |=
+          cvm::error("Error: no residues defined in \"residueRange\".\n", COLVARS_INPUT_ERROR);
     }
   }
 
   if (residues.size() < 2) {
-    cvm::error("Error: dihedralPC requires at least two residues.\n");
-    return;
+    error_code |=
+        cvm::error("Error: dihedralPC requires at least two residues.\n", COLVARS_INPUT_ERROR);
   }
 
   std::string const &sid    = segment_id;
@@ -339,14 +327,15 @@ colvar::dihedPC::dihedPC(std::string const &conf)
   if (get_keyval(conf, "vectorFile", vecFileName, vecFileName)) {
     get_keyval(conf, "vectorNumber", vecNumber, 0);
     if (vecNumber < 1) {
-      cvm::error("A positive value of vectorNumber is required.");
-      return;
+      error_code |=
+          cvm::error("A positive value of vectorNumber is required.", COLVARS_INPUT_ERROR);
     }
 
-    std::ifstream vecFile;
-    vecFile.open(vecFileName.c_str());
-    if (!vecFile.good()) {
-      cvm::error("Error opening dihedral PCA vector file " + vecFileName + " for reading");
+    std::istream &vecFile =
+      cvm::main()->proxy->input_stream(vecFileName,
+                                       "dihedral PCA vector file");
+    if (!vecFile) {
+      return COLVARS_INPUT_ERROR;
     }
 
     // TODO: adapt to different formats by setting this flag
@@ -385,18 +374,17 @@ colvar::dihedPC::dihedPC(std::string const &conf)
       }
     }
  */
-    vecFile.close();
+    cvm::main()->proxy->close_input_stream(vecFileName);
 
   } else {
     get_keyval(conf, "vector", coeffs, coeffs);
   }
 
   if ( coeffs.size() != 4 * (residues.size() - 1)) {
-    cvm::error("Error: wrong number of coefficients: " +
-        cvm::to_str(coeffs.size()) + ". Expected " +
-        cvm::to_str(4 * (residues.size() - 1)) +
-        " (4 coeffs per residue, minus one residue).\n");
-    return;
+    error_code |= cvm::error("Error: wrong number of coefficients: " + cvm::to_str(coeffs.size()) +
+                             ". Expected " + cvm::to_str(4 * (residues.size() - 1)) +
+                             " (4 coeffs per residue, minus one residue).\n",
+                             COLVARS_INPUT_ERROR);
   }
 
   for (size_t i = 0; i < residues.size()-1; i++) {
@@ -422,16 +410,8 @@ colvar::dihedPC::dihedPC(std::string const &conf)
 
   if (cvm::debug())
     cvm::log("Done initializing dihedPC object.\n");
-}
 
-
-colvar::dihedPC::dihedPC()
-  : cvc()
-{
-  function_type = "dihedPC";
-  // Supported through references to atom groups of children cvcs
-  enable(f_cvc_explicit_gradient);
-  x.type(colvarvalue::type_scalar);
+  return error_code;
 }
 
 
@@ -473,7 +453,7 @@ void colvar::dihedPC::collect_gradients(std::vector<int> const &atom_ids, std::v
     cvm::real const t = (PI / 180.) * theta[i]->value().real_value;
     cvm::real const dcosdt = - (PI / 180.) * cvm::sin(t);
     cvm::real const dsindt =   (PI / 180.) * cvm::cos(t);
-    // Coeficient of this dihedPC's gradient in the colvar gradient, times coefficient of this
+    // Coefficient of this dihedPC's gradient in the colvar gradient, times coefficient of this
     // dihedral's gradient in the dihedPC's gradient
     cvm::real const coeff = cvc_coeff * (coeffs[2*i] * dcosdt + coeffs[2*i+1] * dsindt);
 
@@ -500,6 +480,3 @@ void colvar::dihedPC::apply_force(colvarvalue const &force)
                            coeffs[2*i+1] * dsindt) * force);
   }
 }
-
-
-simple_scalar_dist_functions(dihedPC)

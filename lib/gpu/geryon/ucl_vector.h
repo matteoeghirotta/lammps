@@ -147,10 +147,10 @@ class UCL_Vector {
   /// Get element at index i
   inline const hosttype & operator[](const int i) const { return host[i]; }
   /// 2D access (row should always be 0)
-  inline hosttype & operator()(const int row, const int col)
+  inline hosttype & operator()(const int /*row*/, const int col)
     { return host[col]; }
   /// 2D access (row should always be 0)
-  inline const hosttype & operator()(const int row, const int col) const
+  inline const hosttype & operator()(const int /*row*/, const int col) const
     { return host[col]; }
 
   /// Returns pointer to memory pointer for allocation on host
@@ -162,6 +162,8 @@ class UCL_Vector {
   inline void cq(command_queue &cq_in) { host.cq(cq_in); device.cq(cq_in); }
   /// Block until command_queue associated with matrix is complete
   inline void sync() { host.sync(); }
+  /// Assert that any ops in associate command queue have been issued to device
+  inline void flush() { ucl_flush(host.cq()); }
 
   ///Get the size of a row on the host (including any padding) in elements
   inline size_t row_size() const { return host.row_size(); }

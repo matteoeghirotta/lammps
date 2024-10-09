@@ -1,7 +1,7 @@
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -17,28 +17,29 @@
 ------------------------------------------------------------------------- */
 
 #include "compute_temp_body.h"
-#include <mpi.h>
-#include <cstring>
-#include "math_extra.h"
+
 #include "atom.h"
 #include "atom_vec_body.h"
-#include "update.h"
-#include "force.h"
 #include "domain.h"
-#include "modify.h"
-#include "group.h"
 #include "error.h"
+#include "force.h"
+#include "group.h"
+#include "math_extra.h"
+#include "modify.h"
+#include "update.h"
+
+#include <cstring>
 
 using namespace LAMMPS_NS;
 
-enum{ROTATE,ALL};
+enum { ROTATE, ALL };
 
 /* ---------------------------------------------------------------------- */
 
 ComputeTempBody::ComputeTempBody(LAMMPS *lmp, int narg, char **arg) :
-  Compute(lmp, narg, arg), id_bias(NULL), tbias(NULL), avec(NULL)
+    Compute(lmp, narg, arg), id_bias(nullptr), tbias(nullptr), avec(nullptr)
 {
-  if (narg < 3) error->all(FLERR,"Illegal compute temp/body command");
+  if (narg < 3) utils::missing_cmd_args(FLERR, "compute temp/body", error);
 
   scalar_flag = vector_flag = 1;
   size_vector = 6;
@@ -47,27 +48,24 @@ ComputeTempBody::ComputeTempBody(LAMMPS *lmp, int narg, char **arg) :
   tempflag = 1;
 
   tempbias = 0;
-  id_bias = NULL;
   mode = ALL;
+
+  // clang-format off
 
   int iarg = 3;
   while (iarg < narg) {
     if (strcmp(arg[iarg],"bias") == 0) {
-      if (iarg+2 > narg)
-        error->all(FLERR,"Illegal compute temp/body command");
+      if (iarg+2 > narg) utils::missing_cmd_args(FLERR, "compute temp/body bias", error);
       tempbias = 1;
-      int n = strlen(arg[iarg+1]) + 1;
-      id_bias = new char[n];
-      strcpy(id_bias,arg[iarg+1]);
+      id_bias = utils::strdup(arg[iarg+1]);
       iarg += 2;
     } else if (strcmp(arg[iarg],"dof") == 0) {
-      if (iarg+2 > narg)
-        error->all(FLERR,"Illegal compute temp/body command");
+      if (iarg+2 > narg) utils::missing_cmd_args(FLERR, "compute temp/body dof", error);
       if (strcmp(arg[iarg+1],"rotate") == 0) mode = ROTATE;
       else if (strcmp(arg[iarg+1],"all") == 0) mode = ALL;
-      else error->all(FLERR,"Illegal compute temp/body command");
+      else error->all(FLERR,"Unknown compute temp/body dof keyword {}", arg[iarg+1]);
       iarg += 2;
-    } else error->all(FLERR,"Illegal compute temp/body command");
+    } else error->all(FLERR,"Unknown compute temp/body keyword {}", arg[iarg]);
   }
 
   vector = new double[size_vector];
@@ -78,8 +76,8 @@ ComputeTempBody::ComputeTempBody(LAMMPS *lmp, int narg, char **arg) :
 
 ComputeTempBody::~ComputeTempBody()
 {
-  delete [] id_bias;
-  delete [] vector;
+  delete[] id_bias;
+  delete[] vector;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -88,9 +86,8 @@ void ComputeTempBody::init()
 {
   // error check
 
-  avec = (AtomVecBody *) atom->style_match("body");
-  if (!avec)
-    error->all(FLERR,"Compute temp/body requires atom style body");
+  avec = dynamic_cast<AtomVecBody *>(atom->style_match("body"));
+  if (!avec) error->all(FLERR,"Compute temp/body requires atom style body");
 
   // check that all particles are finite-size, no point particles allowed
 
@@ -100,18 +97,16 @@ void ComputeTempBody::init()
 
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit)
-      if (body[i] < 0)
-        error->one(FLERR,"Compute temp/body requires bodies");
+      if (body[i] < 0) error->one(FLERR,"Compute temp/body requires bodies");
 
   if (tempbias) {
-    int i = modify->find_compute(id_bias);
-    if (i < 0)
-      error->all(FLERR,"Could not find compute ID for temperature bias");
-    tbias = modify->compute[i];
+    tbias = modify->get_compute_by_id(id_bias);
+    if (!tbias)
+      error->all(FLERR,"Could not find compute {} for temperature bias", id_bias);
     if (tbias->tempflag == 0)
-      error->all(FLERR,"Bias compute does not calculate temperature");
+      error->all(FLERR,"Bias compute {} does not calculate temperature", id_bias);
     if (tbias->tempbias == 0)
-      error->all(FLERR,"Bias compute does not calculate a velocity bias");
+      error->all(FLERR,"Bias compute {} does not calculate a velocity bias", id_bias);
     if (tbias->igroup != igroup)
       error->all(FLERR,"Bias compute group does not match compute group");
     if (strcmp(tbias->style,"temp/region") == 0) tempbias = 2;
@@ -343,7 +338,6 @@ void ComputeTempBody::compute_vector()
 
         inertia = bonus[body[i]].inertia;
         quat = bonus[body[i]].quat;
-        massone = rmass[i];
 
         // wbody = angular velocity in body frame
 

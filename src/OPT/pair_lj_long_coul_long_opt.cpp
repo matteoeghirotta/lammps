@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -16,22 +17,19 @@
 ------------------------------------------------------------------------- */
 
 #include "pair_lj_long_coul_long_opt.h"
+
+#include "atom.h"
+#include "ewald_const.h"
+#include "force.h"
+#include "math_extra.h"
+#include "neigh_list.h"
+
 #include <cmath>
 #include <cstring>
-#include "atom.h"
-#include "force.h"
-#include "neigh_list.h"
-#include "math_vector.h"
 
 using namespace LAMMPS_NS;
-
-#define EWALD_F   1.12837917
-#define EWALD_P   0.3275911
-#define A1        0.254829592
-#define A2       -0.284496736
-#define A3        1.421413741
-#define A4       -1.453152027
-#define A5        1.061405429
+using namespace MathExtra;
+using namespace EwaldConst;
 
 /* ---------------------------------------------------------------------- */
 
@@ -555,7 +553,7 @@ void PairLJLongCoulLongOpt::eval()
   double *cutsqi, *cut_ljsqi, *lj1i, *lj2i, *lj3i, *lj4i, *offseti;
   double rsq, r2inv, force_coul, force_lj;
   double g2 = g_ewald_6*g_ewald_6, g6 = g2*g2*g2, g8 = g6*g2;
-  vector xi, d;
+  double xi[3], d[3];
 
   ineighn = (ineigh = list->ilist)+list->inum;
 
@@ -565,7 +563,7 @@ void PairLJLongCoulLongOpt::eval()
     offseti = offset[typei = type[i]];
     lj1i = lj1[typei]; lj2i = lj2[typei]; lj3i = lj3[typei]; lj4i = lj4[typei];
     cutsqi = cutsq[typei]; cut_ljsqi = cut_ljsq[typei];
-    memcpy(xi, x0+(i+(i<<1)), sizeof(vector));
+    memcpy(xi, x0+(i+(i<<1)), 3*sizeof(double));
     jneighn = (jneigh = list->firstneigh[i])+list->numneigh[i];
 
     for (; jneigh<jneighn; ++jneigh) {                        // loop over neighbors
@@ -578,7 +576,7 @@ void PairLJLongCoulLongOpt::eval()
         d[1] = xi[1] - xj[1];
         d[2] = xi[2] - xj[2]; }
 
-      if ((rsq = vec_dot(d, d)) >= cutsqi[typej = type[j]]) continue;
+      if ((rsq = dot3(d, d)) >= cutsqi[typej = type[j]]) continue;
       r2inv = 1.0/rsq;
 
       if (ORDER1 && (rsq < cut_coulsq)) {                // coulombic
@@ -616,7 +614,7 @@ void PairLJLongCoulLongOpt::eval()
 
       if (rsq < cut_ljsqi[typej]) {                        // lj
         if (ORDER6) {                                        // long-range lj
-          if(!LJTABLE || rsq <= tabinnerdispsq) {               // series real space
+          if (!LJTABLE || rsq <= tabinnerdispsq) {               // series real space
             double rn = r2inv*r2inv*r2inv;
             double x2 = g2*rsq, a2 = 1.0/x2;
             x2 = a2*exp(-x2)*lj4i[typej];
@@ -716,7 +714,7 @@ void PairLJLongCoulLongOpt::eval_outer()
   double rsq, r2inv, force_coul, force_lj;
   double g2 = g_ewald_6*g_ewald_6, g6 = g2*g2*g2, g8 = g6*g2;
   double respa_lj = 0.0, respa_coul = 0.0, frespa = 0.0;
-  vector xi, d;
+  double xi[3], d[3];
 
   double cut_in_off = cut_respa[2];
   double cut_in_on = cut_respa[3];
@@ -733,7 +731,7 @@ void PairLJLongCoulLongOpt::eval_outer()
     offseti = offset[typei = type[i]];
     lj1i = lj1[typei]; lj2i = lj2[typei]; lj3i = lj3[typei]; lj4i = lj4[typei];
     cutsqi = cutsq[typei]; cut_ljsqi = cut_ljsq[typei];
-    memcpy(xi, x0+(i+(i<<1)), sizeof(vector));
+    memcpy(xi, x0+(i+(i<<1)), 3*sizeof(double));
     jneighn = (jneigh = list->firstneigh[i])+list->numneigh[i];
 
     for (; jneigh<jneighn; ++jneigh) {                        // loop over neighbors
@@ -746,7 +744,7 @@ void PairLJLongCoulLongOpt::eval_outer()
         d[1] = xi[1] - xj[1];
         d[2] = xi[2] - xj[2]; }
 
-      if ((rsq = vec_dot(d, d)) >= cutsqi[typej = type[j]]) continue;
+      if ((rsq = dot3(d, d)) >= cutsqi[typej = type[j]]) continue;
       r2inv = 1.0/rsq;
 
       frespa = 1.0;                                       // check whether and how to compute respa corrections

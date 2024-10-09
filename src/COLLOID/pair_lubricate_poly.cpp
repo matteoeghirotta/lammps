@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -18,31 +19,27 @@
 ------------------------------------------------------------------------- */
 
 #include "pair_lubricate_poly.h"
-#include <mpi.h>
-#include <cmath>
-#include <cstring>
+
 #include "atom.h"
 #include "comm.h"
-#include "force.h"
-#include "neighbor.h"
-#include "neigh_list.h"
-#include "neigh_request.h"
 #include "domain.h"
-#include "modify.h"
+#include "error.h"
 #include "fix.h"
 #include "fix_deform.h"
 #include "fix_wall.h"
+#include "force.h"
 #include "input.h"
-#include "variable.h"
 #include "math_const.h"
-#include "error.h"
+#include "modify.h"
+#include "neigh_list.h"
+#include "neighbor.h"
+#include "variable.h"
+
+#include <cmath>
+#include <cstring>
 
 using namespace LAMMPS_NS;
 using namespace MathConst;
-
-// same as fix_wall.cpp
-
-enum{EDGE,CONSTANT,VARIABLE};
 
 /* ---------------------------------------------------------------------- */
 
@@ -129,7 +126,7 @@ void PairLubricatePoly::compute(int eflag, int vflag)
     // copy updated omega to the ghost particles
     // no need to do this if not shearing since comm->ghost_velocity is set
 
-    comm->forward_comm_pair(this);
+    comm->forward_comm(this);
   }
 
   // This section of code adjusts R0/RT0/RS0 if necessary due to changes
@@ -137,20 +134,20 @@ void PairLubricatePoly::compute(int eflag, int vflag)
 
   double dims[3], wallcoord;
   if (flagVF) // Flag for volume fraction corrections
-    if (flagdeform || flagwall == 2){ // Possible changes in volume fraction
+    if (flagdeform || flagwall == 2) { // Possible changes in volume fraction
       if (flagdeform && !flagwall)
         for (j = 0; j < 3; j++)
           dims[j] = domain->prd[j];
-      else if (flagwall == 2 || (flagdeform && flagwall == 1)){
+      else if (flagwall == 2 || (flagdeform && flagwall == 1)) {
          double wallhi[3], walllo[3];
-         for (int j = 0; j < 3; j++){
+         for (int j = 0; j < 3; j++) {
            wallhi[j] = domain->prd[j];
            walllo[j] = 0;
          }
-         for (int m = 0; m < wallfix->nwall; m++){
+         for (int m = 0; m < wallfix->nwall; m++) {
            int dim = wallfix->wallwhich[m] / 2;
            int side = wallfix->wallwhich[m] % 2;
-           if (wallfix->xstyle[m] == VARIABLE){
+           if (wallfix->xstyle[m] == FixWall::VARIABLE) {
              wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
            }
            else wallcoord = wallfix->coord0[m];
@@ -427,12 +424,13 @@ void PairLubricatePoly::compute(int eflag, int vflag)
 void PairLubricatePoly::init_style()
 {
   if (force->newton_pair == 1)
-    error->all(FLERR,"Pair lubricate/poly requires newton pair off");
+    error->all(FLERR, "Pair lubricate/poly requires newton pair off");
   if (comm->ghost_velocity == 0)
-    error->all(FLERR,
-               "Pair lubricate/poly requires ghost atoms store velocity");
-  if (!atom->sphere_flag)
-    error->all(FLERR,"Pair lubricate/poly requires atom style sphere");
+    error->all(FLERR, "Pair lubricate/poly requires ghost atoms store velocity");
+  if (!atom->omega_flag)
+    error->all(FLERR, "Pair lubricate/poly requires atom attribute omega");
+  if (!atom->radius_flag)
+    error->all(FLERR, "Pair lubricate/poly requires atom attribute radius");
 
   // ensure all particles are finite-size
   // for pair hybrid, should limit test to types using the pair style
@@ -442,11 +440,9 @@ void PairLubricatePoly::init_style()
 
   for (int i = 0; i < nlocal; i++)
     if (radius[i] == 0.0)
-      error->one(FLERR,"Pair lubricate/poly requires extended particles");
+      error->one(FLERR,"Pair lubricate/poly requires only extended particles");
 
-  int irequest = neighbor->request(this,instance_me);
-  neighbor->requests[irequest]->half = 0;
-  neighbor->requests[irequest]->full = 1;
+  neighbor->add_request(this, NeighConst::REQ_FULL);
 
   // set the isotropic constants that depend on the volume fraction
   // vol_T = total volume
@@ -461,30 +457,23 @@ void PairLubricatePoly::init_style()
   // are re-calculated at every step.
 
   shearing = flagdeform = flagwall = 0;
-  for (int i = 0; i < modify->nfix; i++){
-    if (strcmp(modify->fix[i]->style,"deform") == 0) {
-      shearing = flagdeform = 1;
-      if (((FixDeform *) modify->fix[i])->remapflag != Domain::V_REMAP)
-        error->all(FLERR,"Using pair lubricate with inconsistent "
-                   "fix deform remap option");
-    }
-    if (strstr(modify->fix[i]->style,"wall") != NULL) {
-      if (flagwall)
-        error->all(FLERR,
-                   "Cannot use multiple fix wall commands with "
-                   "pair lubricate/poly");
-      flagwall = 1; // Walls exist
-      wallfix = (FixWall *) modify->fix[i];
-      if (wallfix->xflag) flagwall = 2; // Moving walls exist
-    }
 
-    if (strstr(modify->fix[i]->style,"wall") != NULL){
-      flagwall = 1; // Walls exist
-      if (((FixWall *) modify->fix[i])->xflag ) {
-        flagwall = 2; // Moving walls exist
-        wallfix = (FixWall *) modify->fix[i];
-      }
-    }
+  auto fixes = modify->get_fix_by_style("^deform");
+  if (fixes.size() > 0) {
+    shearing = flagdeform = 1;
+    auto *myfix = dynamic_cast<FixDeform *>(fixes[0]);
+    if (myfix && (myfix->remapflag != Domain::V_REMAP))
+      error->all(FLERR,"Using pair lubricate/poly with inconsistent fix deform remap option");
+  }
+  fixes = modify->get_fix_by_style("^wall");
+  if (fixes.size() > 1)
+    error->all(FLERR, "Cannot use multiple fix wall commands with pair lubricate/poly");
+  else if (fixes.size() == 1) {
+    wallfix = dynamic_cast<FixWall *>(fixes[0]);
+    if (!wallfix)
+      error->all(FLERR, "Fix {} is not compatible with pair lubricate/poly", fixes[0]->style);
+    flagwall = 1;
+    if (wallfix->xflag) flagwall = 2; // Moving walls exist
   }
 
   double vol_T;
@@ -492,14 +481,14 @@ void PairLubricatePoly::init_style()
   if (!flagwall) vol_T = domain->xprd*domain->yprd*domain->zprd;
   else {
     double wallhi[3], walllo[3];
-    for (int j = 0; j < 3; j++){
+    for (int j = 0; j < 3; j++) {
       wallhi[j] = domain->prd[j];
       walllo[j] = 0;
     }
-    for (int m = 0; m < wallfix->nwall; m++){
+    for (int m = 0; m < wallfix->nwall; m++) {
       int dim = wallfix->wallwhich[m] / 2;
       int side = wallfix->wallwhich[m] % 2;
-      if (wallfix->xstyle[m] == VARIABLE){
+      if (wallfix->xstyle[m] == FixWall::VARIABLE) {
         wallfix->xindex[m] = input->variable->find(wallfix->xstr[m]);
         //Since fix->wall->init happens after pair->init_style
         wallcoord = input->variable->compute_equal(wallfix->xindex[m]);
@@ -540,7 +529,7 @@ void PairLubricatePoly::init_style()
   for (int i = 0; i < modify->nfix; i++)
     if (strcmp(modify->fix[i]->style,"deform") == 0) {
       shearing = 1;
-      if (((FixDeform *) modify->fix[i])->remapflag != Domain::V_REMAP)
+      if ((dynamic_cast<FixDeform *>(modify->fix[i]))->remapflag != Domain::V_REMAP)
         error->all(FLERR,"Using pair lubricate/poly with inconsistent "
                    "fix deform remap option");
     }

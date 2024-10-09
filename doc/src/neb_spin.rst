@@ -6,8 +6,7 @@ neb/spin command
 Syntax
 """"""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    neb/spin etol ttol N1 N2 Nevery file-style arg keyword
 
@@ -17,9 +16,9 @@ Syntax
 * N2 = max # of iterations (timesteps) to run barrier-climbing NEB
 * Nevery = print replica energies and reaction coordinates every this many timesteps
 * file-style = *final* or *each* or *none*
-  
+
   .. parsed-literal::
-  
+
        *final* arg = filename
          filename = file with initial coords for final replica
            coords for intermediate replicas are linearly interpolated
@@ -39,8 +38,7 @@ Syntax
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    neb/spin 0.1 0.0 1000 500 50 final coords.final
    neb/spin 0.0 0.001 1000 500 50 each coords.initial.$i
@@ -58,7 +56,7 @@ of the energy barrier associated with a transition state, e.g.
 spins to perform a collective rotation from one energy basin to
 another.
 The implementation in LAMMPS follows the discussion in the
-following paper: :ref:`(BessarabA) <BessarabA>`.
+following paper: :ref:`(Bessarab) <BessarabA>`.
 
 Each replica runs on a partition of one or more processors.  Processor
 partitions are defined at run-time using the :doc:`-partition command-line switch <Run_options>`.  Note that if you have MPI installed, you
@@ -114,11 +112,9 @@ from such an initial path.  In this case, you will want to generate
 initial states for the intermediate replicas that are geometrically
 closer to the MEP and read them in.
 
-
 ----------
 
-
-For a *file-style* setting of *final*\ , a filename is specified which
+For a *file-style* setting of *final*, a filename is specified which
 contains atomic and spin coordinates for zero or more atoms, in the
 format described below.
 For each atom that appears in the file, the new coordinates are
@@ -133,7 +129,7 @@ is assigned to be a fraction of the angular distance.
 
    The "angular distance" between the starting and final point is
    evaluated in the geodesic sense, as described in
-   :ref:`(BessarabA) <BessarabA>`.
+   :ref:`(Bessarab) <BessarabA>`.
 
 .. note::
 
@@ -160,7 +156,7 @@ with :math:`\nu` the image number, Q the total number of images, and
 
 .. math::
 
-   \vec{k}_i =  \frac{\vec{m}_i^I \times \vec{m}_i^F}{\left|\vec{m}_i^I \times \vec{m}_i^F\right|} 
+   \vec{k}_i =  \frac{\vec{m}_i^I \times \vec{m}_i^F}{\left|\vec{m}_i^I \times \vec{m}_i^F\right|}
 
 if the initial and final spins are not aligned.
 If the initial and final spins are aligned, then their cross
@@ -172,12 +168,12 @@ opposite directions, an arbitrary rotation vector belonging to
 the plane perpendicular to initial and final spins is chosen.
 In this case, a warning message is displayed.
 
-For a *file-style* setting of *each*\ , a filename is specified which is
+For a *file-style* setting of *each*, a filename is specified which is
 assumed to be unique to each replica.
 See the :doc:`neb <neb>` documentation page for more information about this
 option.
 
-For a *file-style* setting of *none*\ , no filename is specified.  Each
+For a *file-style* setting of *none*, no filename is specified.  Each
 replica is assumed to already be in its initial configuration at the
 time the neb command is issued.  This allows each replica to define
 its own configuration by reading a replica-specific data or restart or
@@ -195,21 +191,19 @@ that a long calculation can be restarted if needed.
    must thus be in the correct initial configuration at the time the neb
    command is issued.
 
-
 ----------
-
 
 A NEB calculation proceeds in two stages, each of which is a
 minimization procedure.  To enable
 this, you must first define a
-:doc:`min_style <min_style>`, using either the *spin*\ ,
-*spin/cg*\ , or *spin/lbfgs* style (see
-:doc:`min_spin <min_spin>` for more information).  
+:doc:`min_style <min_style>`, using either the *spin*,
+*spin/cg*, or *spin/lbfgs* style (see
+:doc:`min_spin <min_spin>` for more information).
 The other styles cannot be used, since they relax the lattice
 degrees of freedom instead of the spins.
 
 The minimizer tolerances for energy and force are set by *etol* and
-*ttol*\ , the same as for the :doc:`minimize <minimize>` command.
+*ttol*, the same as for the :doc:`minimize <minimize>` command.
 
 A non-zero *etol* means that the GNEB calculation will terminate if the
 energy criterion is met by every replica.  The energies being compared
@@ -230,7 +224,7 @@ For intermediate replicas, it is the cumulative angular distance
 (normalized by the total cumulative angular distance) between adjacent
 replicas, where "distance" is defined as the length of the 3N-vector of
 the geodesic distances in spin coordinates, with N the number of
-GNEB spins involved (see equation (13) in :ref:`(BessarabA) <BessarabA>`).
+GNEB spins involved (see equation (13) in :ref:`(Bessarab) <BessarabA>`).
 These outputs allow you to monitor NEB's progress in
 finding a good energy barrier.  *N1* and *N2* must both be multiples
 of *Nevery*\ .
@@ -249,7 +243,7 @@ In the second stage of GNEB, the replica with the highest energy is
 selected and the inter-replica forces on it are converted to a force
 that drives its spin coordinates to the top or saddle point of the
 barrier, via the barrier-climbing calculation described in
-:ref:`(BessarabA) <BessarabA>`.  As before, the other replicas rearrange
+:ref:`(Bessarab) <BessarabA>`.  As before, the other replicas rearrange
 themselves along the MEP so as to be roughly equally spaced.
 
 When both stages are complete, if the GNEB calculation was successful,
@@ -259,9 +253,7 @@ configuration at (close to) the saddle point of the transition. The
 potential energies for the set of replicas represents the energy
 profile of the transition along the MEP.
 
-
 ----------
-
 
 An atom map must be defined which it is not by default for :doc:`atom_style atomic <atom_style>` problems.  The :doc:`atom_modify map <atom_modify>` command can be used to do this.
 
@@ -272,9 +264,7 @@ this timestep is likely to evolve during the calculation.
 The minimizers in LAMMPS operate on all spins in your system, even
 non-GNEB atoms, as defined above.
 
-
 ----------
-
 
 Each file read by the neb/spin command containing spin coordinates used
 to initialize one or more replicas must be formatted as follows.
@@ -284,7 +274,6 @@ suffix).  The file can contain initial blank lines or comment lines
 starting with "#" which are ignored.  The first non-blank, non-comment
 line should list N = the number of lines to follow.  The N successive
 lines contain the following information:
-
 
 .. parsed-literal::
 
@@ -308,9 +297,7 @@ Also note there is no requirement that the atoms in the file
 correspond to the GNEB atoms in the group defined by the :doc:`fix neb <fix_neb>` command.  Not every GNEB atom need be in the file,
 and non-GNEB atoms can be listed in the file.
 
-
 ----------
-
 
 Four kinds of output can be generated during a GNEB calculation: energy
 barrier statistics, thermodynamic output by each replica, dump files,
@@ -334,11 +321,11 @@ maximum torque component of any atom in any replica.  The potential
 gradients are the two-norm of the 3N-length magnetic precession vector
 solely due to the interaction potential i.e. without adding in
 inter-replica forces, and projected along the path tangent (as detailed
-in Appendix D of :ref:`(BessarabA) <BessarabA>`).
+in Appendix D of :ref:`(Bessarab) <BessarabA>`).
 
 The "reaction coordinate" (RD) for each replica is the two-norm of the
 3N-length vector of geodesic distances between its spins and the preceding
-replica's spins (see equation (13) of :ref:`(BessarabA) <BessarabA>`), added to
+replica's spins (see equation (13) of :ref:`(Bessarab) <BessarabA>`), added to
 the RD of the preceding replica. The RD of the first replica RD1 = 0.0;
 the RD of the final replica RDN = RDT, the total reaction coordinate.
 The normalized RDs are divided by RDT, so that they form a monotonically
@@ -353,9 +340,9 @@ screen and master log.lammps file by adding the *verbose* keyword. This
 information include the following.
 The "GradVidottan" are the projections of the potential gradient for
 the replica i on its tangent vector (as detailed in Appendix D of
-:ref:`(BessarabA) <BessarabA>`).
+:ref:`(Bessarab) <BessarabA>`).
 The "DNi" are the non normalized geodesic distances (see equation (13)
-of :ref:`(BessarabA) <BessarabA>`), between a replica i and the next replica
+of :ref:`(Bessarab) <BessarabA>`), between a replica i and the next replica
 i+1. For the last replica, this distance is not defined and a "NAN"
 value is the corresponding output.
 
@@ -382,30 +369,25 @@ calculation fails to converge properly to the MEP, and you wish to
 restart the calculation from an intermediate point with altered
 parameters.
 
-A c file script in provided in the tool/spin/interpolate\_gneb
+A c file script in provided in the tool/spin/interpolate_gneb
 directory, that interpolates the MEP given the information provided
 by the *verbose* output option (as detailed in Appendix D of
-:ref:`(BessarabA) <BessarabA>`).
-
+:ref:`(Bessarab) <BessarabA>`).
 
 ----------
 
-
 Restrictions
 """"""""""""
-
 
 This command can only be used if LAMMPS was built with the SPIN
 package.  See the :doc:`Build package <Build_package>` doc
 page for more info.
 
-For magnetic GNEB calculations, only the *spin\_none* value for the
+For magnetic GNEB calculations, only the *spin_none* value for the
 *line* keyword can be used when minimization styles *spin/cg* and
 *spin/lbfgs* are employed.
 
-
 ----------
-
 
 Related commands
 """"""""""""""""
@@ -417,13 +399,9 @@ Default
 
 none
 
-
 ----------
-
 
 .. _BessarabA:
 
-
-
-**(BessarabA)** Bessarab, Uzdin, Jonsson, Comp Phys Comm, 196,
+**(Bessarab)** Bessarab, Uzdin, Jonsson, Comp Phys Comm, 196,
 335-347 (2015).

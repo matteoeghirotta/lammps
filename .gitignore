@@ -9,8 +9,11 @@
 *.d
 *.x
 *.exe
+*.sif
 *.dll
 *.pyc
+*.whl
+a.out
 __pycache__
 
 Obj_*
@@ -35,12 +38,26 @@ vgcore.*
 .Trashes
 ehthumbs.db
 Thumbs.db
-.clang-format
+.lammps_history
+.vs
 
 #cmake
 /build*
-/CMakeCache.txt
-/CMakeFiles/
+CMakeCache.txt
+CMakeFiles
 /Makefile
-/cmake_install.cmake
+Testing
+Temporary
+cmake_install.cmake
 /lmp
+out/Debug
+out/RelWithDebInfo
+out/Release
+out/x86
+out/x64
+src/Makefile.package-e
+src/Makefile.package.settings-e
+/cmake/build/x64-Debug-Clang
+/install/x64-GUI-MSVC
+/install
+.Rhistory

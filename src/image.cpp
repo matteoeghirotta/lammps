@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -16,16 +17,16 @@
 ------------------------------------------------------------------------- */
 
 #include "image.h"
-#include <mpi.h>
-#include <cmath>
-#include <cctype>
-#include <cstring>
-#include "math_extra.h"
-#include "random_mars.h"
-#include "math_const.h"
+
 #include "error.h"
-#include "force.h"
+#include "math_const.h"
+#include "math_extra.h"
 #include "memory.h"
+#include "random_mars.h"
+
+#include <cctype>
+#include <cmath>
+#include <cstring>
 
 #ifdef LAMMPS_JPEG
 #include <jpeglib.h>
@@ -39,11 +40,13 @@
 #endif
 
 using namespace LAMMPS_NS;
-using namespace MathConst;
+using MathConst::DEG2RAD;
+using MathConst::MY_PI;
+using MathConst::MY_PI4;
 
-#define NCOLORS 140
-#define NELEMENTS 109
-#define EPSILON 1.0e-6
+static constexpr int NCOLORS = 140;
+static constexpr int NELEMENTS = 109;
+static constexpr double EPSILON = 1.0e-6;
 
 enum{NUMERIC,MINVALUE,MAXVALUE};
 enum{CONTINUOUS,DISCRETE,SEQUENTIAL};
@@ -52,7 +55,9 @@ enum{NO,YES};
 
 /* ---------------------------------------------------------------------- */
 
-Image::Image(LAMMPS *lmp, int nmap_caller) : Pointers(lmp)
+Image::Image(LAMMPS *lmp, int nmap_caller) :
+    Pointers(lmp), depthBuffer(nullptr), surfaceBuffer(nullptr), depthcopy(nullptr),
+    surfacecopy(nullptr), imageBuffer(nullptr), rgbcopy(nullptr), writeBuffer(nullptr)
 {
   MPI_Comm_rank(world,&me);
   MPI_Comm_size(world,&nprocs);
@@ -60,12 +65,13 @@ Image::Image(LAMMPS *lmp, int nmap_caller) : Pointers(lmp)
   // defaults for 3d viz
 
   width = height = 512;
-  theta = 60.0 * MY_PI/180.0;
-  phi = 30.0 * MY_PI/180.0;
+  theta = 60.0 * DEG2RAD;
+  phi = 30.0 * DEG2RAD;
   zoom = 1.0;
   persp = 0.0;
   shiny = 1.0;
   ssao = NO;
+  fsaa = NO;
 
   up[0] = 0.0;
   up[1] = 0.0;
@@ -74,8 +80,8 @@ Image::Image(LAMMPS *lmp, int nmap_caller) : Pointers(lmp)
   // colors
 
   ncolors = 0;
-  username = NULL;
-  userrgb = NULL;
+  username = nullptr;
+  userrgb = nullptr;
 
   boxcolor = color2rgb("yellow");
   background[0] = background[1] = background[2] = 0;
@@ -112,7 +118,12 @@ Image::Image(LAMMPS *lmp, int nmap_caller) : Pointers(lmp)
   backLightColor[1] = 0.9;
   backLightColor[2] = 0.9;
 
-  random = NULL;
+  random = nullptr;
+
+  // MPI_Gatherv vectors
+
+  recvcounts = nullptr;
+  displs = nullptr;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -134,6 +145,9 @@ Image::~Image()
   memory->destroy(rgbcopy);
 
   if (random) delete random;
+
+  memory->destroy(recvcounts);
+  memory->destroy(displs);
 }
 
 /* ----------------------------------------------------------------------
@@ -143,6 +157,13 @@ Image::~Image()
 
 void Image::buffers()
 {
+  memory->destroy(depthBuffer);
+  memory->destroy(surfaceBuffer);
+  memory->destroy(imageBuffer);
+  memory->destroy(depthcopy);
+  memory->destroy(surfacecopy);
+  memory->destroy(rgbcopy);
+
   npixels = width * height;
   memory->create(depthBuffer,npixels,"image:depthBuffer");
   memory->create(surfaceBuffer,2*npixels,"image:surfaceBuffer");
@@ -175,7 +196,7 @@ void Image::view_params(double boxxlo, double boxxhi, double boxylo,
 
   // adjust camDir by epsilon if camDir and up are parallel
   // do this by tweaking view direction, not up direction
-  // try to insure continuous images as changing view passes thru up
+  // try to ensure continuous images as changing view passes thru up
   // sufficient to handle common cases where theta = 0 or 180 is degenerate?
 
   double dot = MathExtra::dot3(up,camDir);
@@ -334,19 +355,60 @@ void Image::merge()
   // extra SSAO enhancement
   // bcast full image to all procs
   // each works on subset of pixels
-  // gather result back to proc 0
+  // MPI_Gather() result back to proc 0
+  // use Gatherv() if subset of pixels is not the same size on every proc
 
   if (ssao) {
     MPI_Bcast(imageBuffer,npixels*3,MPI_BYTE,0,world);
     MPI_Bcast(surfaceBuffer,npixels*2,MPI_DOUBLE,0,world);
     MPI_Bcast(depthBuffer,npixels,MPI_DOUBLE,0,world);
     compute_SSAO();
-    int pixelPart = height/nprocs * width*3;
-    MPI_Gather(imageBuffer+me*pixelPart,pixelPart,MPI_BYTE,
-               rgbcopy,pixelPart,MPI_BYTE,0,world);
+
+    int pixelstart = 3 * static_cast<int> (1.0*me/nprocs * npixels);
+    int pixelstop = 3 * static_cast<int> (1.0*(me+1)/nprocs * npixels);
+    int mypixels = pixelstop - pixelstart;
+
+    if (npixels % nprocs == 0) {
+      MPI_Gather(imageBuffer+pixelstart,mypixels,MPI_BYTE,
+                 rgbcopy,mypixels,MPI_BYTE,0,world);
+
+    } else {
+      if (recvcounts == nullptr) {
+        memory->create(recvcounts,nprocs,"image:recvcounts");
+        memory->create(displs,nprocs,"image:displs");
+        MPI_Allgather(&mypixels,1,MPI_INT,recvcounts,1,MPI_INT,world);
+        displs[0] = 0;
+        for (int i = 1; i < nprocs; i++)
+          displs[i] = displs[i-1] + recvcounts[i-1];
+      }
+
+      MPI_Gatherv(imageBuffer+pixelstart,mypixels,MPI_BYTE,
+                  rgbcopy,recvcounts,displs,MPI_BYTE,0,world);
+    }
+
     writeBuffer = rgbcopy;
   } else {
     writeBuffer = imageBuffer;
+  }
+
+  // scale down image for antialiasing. can be done in place with simple averaging
+  if (fsaa) {
+    for (int h=0; h < height; h += 2) {
+      for (int w=0; w < width; w +=2) {
+        int idx1 = 3*width*h + 3*w;
+        int idx2 = 3*width*h + 3*(w+1);
+        int idx3 = 3*width*(h+1) + 3*w;
+        int idx4 = 3*width*(h+1) + 3*(w+1);
+
+        int out = 3*(width/2)*(h/2) + 3*(w/2);
+        for (int i=0; i < 3; ++i) {
+          writeBuffer[out+i] = (unsigned char) (0.25*((int)writeBuffer[idx1+i]
+                                                      +(int)writeBuffer[idx2+i]
+                                                      +(int)writeBuffer[idx3+i]
+                                                      +(int)writeBuffer[idx4+i]));
+        }
+      }
+    }
   }
 }
 
@@ -651,7 +713,7 @@ void Image::draw_cylinder(double *x, double *y,
       double c = surface[0] * surface[0] + surface[1] * surface[1] - radsq;
 
       double partial = b*b - 4*a*c;
-      if (partial < 0) continue;
+      if ((partial < 0.0) || (a == 0.0)) continue;
       partial = sqrt (partial);
 
       double t = (-b + partial) / (2*a);
@@ -783,26 +845,34 @@ void Image::draw_triangle(double *x, double *y, double *z, double *surfaceColor)
       double s1[3], s2[3], s3[3];
       double c1[3], c2[3];
 
+      // for grid cell viz:
+      // using <= if test can leave single-pixel gaps between 2 tris
+      // using < if test fixes it
+      // suggested by Nathan Fabian, Nov 2022
+
       MathExtra::sub3 (zlocal, xlocal, s1);
       MathExtra::sub3 (ylocal, xlocal, s2);
       MathExtra::sub3 (p, xlocal, s3);
       MathExtra::cross3 (s1, s2, c1);
       MathExtra::cross3 (s1, s3, c2);
-      if (MathExtra::dot3 (c1, c2) <= 0) continue;
+      if (MathExtra::dot3 (c1, c2) < 0) continue;
+      //if (MathExtra::dot3 (c1, c2) <= 0) continue;
 
       MathExtra::sub3 (xlocal, ylocal, s1);
       MathExtra::sub3 (zlocal, ylocal, s2);
       MathExtra::sub3 (p, ylocal, s3);
       MathExtra::cross3 (s1, s2, c1);
       MathExtra::cross3 (s1, s3, c2);
-      if (MathExtra::dot3 (c1, c2) <= 0) continue;
+      if (MathExtra::dot3 (c1, c2) < 0) continue;
+      //if (MathExtra::dot3 (c1, c2) <= 0) continue;
 
       MathExtra::sub3 (ylocal, zlocal, s1);
       MathExtra::sub3 (xlocal, zlocal, s2);
       MathExtra::sub3 (p, zlocal, s3);
       MathExtra::cross3 (s1, s2, c1);
       MathExtra::cross3 (s1, s3, c2);
-      if (MathExtra::dot3 (c1, c2) <= 0) continue;
+      if (MathExtra::dot3 (c1, c2) < 0) continue;
+      //if (MathExtra::dot3 (c1, c2) <= 0) continue;
 
       double cNormal[3];
       cNormal[0] = MathExtra::dot3(camRight, normal);
@@ -880,111 +950,124 @@ void Image::compute_SSAO()
         -tanPerPixel / zoom;
   int pixelRadius = (int) trunc (SSAORadius / pixelWidth + 0.5);
 
-  int x,y,s;
-  int hPart = height / nprocs;
-  int index = me * hPart * width;
-  for (y = me * hPart; y < (me + 1) * hPart; y ++) {
-    for (x = 0; x < width; x ++, index ++) {
-      double cdepth = depthBuffer[index];
-      if (cdepth < 0) { continue; }
+  // each proc is assigned a subset of contiguous pixels from the full image
+  // pixels are contiguous in x (columns within a row), then by row
+  // index = pixels from 0 to npixel-1
+  // x = column # from 0 to width-1
+  // y = row # from 0 to height-1
 
-      double sx = surfaceBuffer[index * 2 + 0];
-      double sy = surfaceBuffer[index * 2 + 1];
-      double sin_t = -sqrt(sx*sx + sy*sy);
+  int pixelstart = static_cast<int> (1.0*me/nprocs * npixels);
+  int pixelstop = static_cast<int> (1.0*(me+1)/nprocs * npixels);
 
-      double mytheta = random->uniform() * SSAOJitter;
-      double ao = 0.0;
+  // file buffer with random numbers to avoid race conditions
+  double *uniform = new double[pixelstop - pixelstart];
+  for (int i = 0; i < pixelstop - pixelstart; ++i) uniform[i] = random->uniform();
 
-      for (s = 0; s < SSAOSamples; s ++) {
-        double hx = cos(mytheta);
-        double hy = sin(mytheta);
-        mytheta += delTheta;
+#if defined(_OPENMP)
+#pragma omp parallel for
+#endif
+  for (int index = pixelstart; index < pixelstop; index++) {
+    int x = index % width;
+    int y = index / width;
 
-        // multiply by z cross surface tangent
-        // so that dot (aka cos) works here
+    double cdepth = depthBuffer[index];
+    if (cdepth < 0) { continue; }
 
-        double scaled_sin_t = sin_t * (hx*sy + hy*sx);
+    double sx = surfaceBuffer[index * 2 + 0];
+    double sy = surfaceBuffer[index * 2 + 1];
+    double sin_t = -sqrt(sx*sx + sy*sy);
 
-        // Bresenham's line algorithm to march over depthBuffer
+    double mytheta = uniform[index - pixelstart] * SSAOJitter;
+    double ao = 0.0;
 
-        int dx = static_cast<int> (hx * pixelRadius);
-        int dy = static_cast<int> (hy * pixelRadius);
-        int ex = x + dx;
-        if (ex < 0) { ex = 0; } if (ex >= width) { ex = width - 1; }
-        int ey = y + dy;
-        if (ey < 0) { ey = 0; } if (ey >= height) { ey = height - 1; }
-        double delta;
-        int small, large;
-        double lenIncr;
-        if (fabs(hx) > fabs(hy)) {
-          small = (hx > 0) ? 1 : -1;
-          large = (hy > 0) ? width : -width;
-          delta = fabs(hy / hx);
-        } else {
-          small = (hy > 0) ? width : -width;
-          large = (hx > 0) ? 1 : -1;
-          delta = fabs(hx / hy);
+    for (int s = 0; s < SSAOSamples; s ++) {
+      double hx = cos(mytheta);
+      double hy = sin(mytheta);
+      mytheta += delTheta;
+
+      // multiply by z cross surface tangent
+      // so that dot (aka cos) works here
+
+      double scaled_sin_t = sin_t * (hx*sy + hy*sx);
+
+      // Bresenham's line algorithm to march over depthBuffer
+
+      int dx = static_cast<int> (hx * pixelRadius);
+      int dy = static_cast<int> (hy * pixelRadius);
+      int ex = x + dx;
+      if (ex < 0) { ex = 0; } if (ex >= width) { ex = width - 1; }
+      int ey = y + dy;
+      if (ey < 0) { ey = 0; } if (ey >= height) { ey = height - 1; }
+      double delta;
+      int small, large;
+      double lenIncr;
+      if (fabs(hx) > fabs(hy)) {
+        small = (hx > 0) ? 1 : -1;
+        large = (hy > 0) ? width : -width;
+        delta = fabs(hy / hx);
+      } else {
+        small = (hy > 0) ? width : -width;
+        large = (hx > 0) ? 1 : -1;
+        delta = fabs(hx / hy);
+      }
+      lenIncr = sqrt (1 + delta * delta) * pixelWidth;
+
+      // initialize with one step
+      // because the center point doesn't need testing
+
+      int end = ex + ey * width;
+      int ind = index + small;
+      double len = lenIncr;
+      double err = delta;
+      if (err >= 1.0) {
+        ind += large;
+        err -= 1.0;
+      }
+
+      double minPeak = -1;
+      double peakLen = 0.0;
+      while ((small > 0 && ind <= end) || (small < 0 && ind >= end)) {
+        if (ind < 0 || ind >= (width*height)) {
+          break;
         }
-        lenIncr = sqrt (1 + delta * delta) * pixelWidth;
 
-        // initialize with one step
-        // because the center point doesn't need testing
+        // cdepth - depthBuffer B/C we want it in the negative z direction
 
-        int end = ex + ey * width;
-        int ind = index + small;
-        double len = lenIncr;
-        double err = delta;
+        if (minPeak < 0 || (depthBuffer[ind] >= 0 &&
+                            depthBuffer[ind] < minPeak)) {
+          minPeak = depthBuffer[ind];
+          peakLen = len;
+        }
+        ind += small;
+        len += lenIncr;
+        err += delta;
         if (err >= 1.0) {
           ind += large;
           err -= 1.0;
         }
-
-        double minPeak = -1;
-        double peakLen = 0.0;
-        int stepsTaken = 1;
-        while ((small > 0 && ind <= end) || (small < 0 && ind >= end)) {
-          if (ind < 0 || ind >= (width*height)) {
-            break;
-          }
-
-          // cdepth - depthBuffer B/C we want it in the negative z direction
-
-          if (minPeak < 0 || (depthBuffer[ind] >= 0 &&
-                              depthBuffer[ind] < minPeak)) {
-            minPeak = depthBuffer[ind];
-            peakLen = len;
-          }
-          ind += small;
-          len += lenIncr;
-          err += delta;
-          if (err >= 1.0) {
-            ind += large;
-            err -= 1.0;
-          }
-          stepsTaken ++;
-        }
-
-        if (peakLen > 0) {
-          double h = atan ((cdepth - minPeak) / peakLen);
-          ao += saturate(sin (h) - scaled_sin_t);
-        } else {
-          ao += saturate(-scaled_sin_t);
-        }
       }
-      ao /= (double)SSAOSamples;
 
-      double c[3];
-      c[0] = (double) (*(unsigned char *) &imageBuffer[index * 3 + 0]);
-      c[1] = (double) (*(unsigned char *) &imageBuffer[index * 3 + 1]);
-      c[2] = (double) (*(unsigned char *) &imageBuffer[index * 3 + 2]);
-      c[0] *= (1.0 - ao);
-      c[1] *= (1.0 - ao);
-      c[2] *= (1.0 - ao);
-      imageBuffer[index * 3 + 0] = (int) c[0];
-      imageBuffer[index * 3 + 1] = (int) c[1];
-      imageBuffer[index * 3 + 2] = (int) c[2];
+      if (peakLen > 0) {
+        double h = atan ((cdepth - minPeak) / peakLen);
+        ao += saturate(sin (h) - scaled_sin_t);
+      } else {
+        ao += saturate(-scaled_sin_t);
+      }
     }
+    ao /= (double)SSAOSamples;
+
+    double c[3];
+    c[0] = (double) (*(unsigned char *) &imageBuffer[index * 3 + 0]);
+    c[1] = (double) (*(unsigned char *) &imageBuffer[index * 3 + 1]);
+    c[2] = (double) (*(unsigned char *) &imageBuffer[index * 3 + 2]);
+    c[0] *= (1.0 - ao);
+    c[1] *= (1.0 - ao);
+    c[2] *= (1.0 - ao);
+    imageBuffer[index * 3 + 0] = (int) c[0];
+    imageBuffer[index * 3 + 1] = (int) c[1];
+    imageBuffer[index * 3 + 2] = (int) c[2];
   }
+  delete[] uniform;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -992,6 +1075,7 @@ void Image::compute_SSAO()
 void Image::write_JPG(FILE *fp)
 {
 #ifdef LAMMPS_JPEG
+  int aafactor = fsaa ? 2 : 1;
   struct jpeg_compress_struct cinfo;
   struct jpeg_error_mgr jerr;
   JSAMPROW row_pointer;
@@ -999,8 +1083,8 @@ void Image::write_JPG(FILE *fp)
   cinfo.err = jpeg_std_error(&jerr);
   jpeg_create_compress(&cinfo);
   jpeg_stdio_dest(&cinfo,fp);
-  cinfo.image_width = width;
-  cinfo.image_height = height;
+  cinfo.image_width = width/aafactor;
+  cinfo.image_height = height/aafactor;
   cinfo.input_components = 3;
   cinfo.in_color_space = JCS_RGB;
 
@@ -1010,7 +1094,7 @@ void Image::write_JPG(FILE *fp)
 
   while (cinfo.next_scanline < cinfo.image_height) {
     row_pointer = (JSAMPROW)
-      &writeBuffer[(cinfo.image_height - 1 - cinfo.next_scanline) * 3 * width];
+      &writeBuffer[(cinfo.image_height - 1 - cinfo.next_scanline) * 3 * (width/aafactor)];
     jpeg_write_scanlines(&cinfo,&row_pointer,1);
   }
 
@@ -1026,16 +1110,17 @@ void Image::write_JPG(FILE *fp)
 void Image::write_PNG(FILE *fp)
 {
 #ifdef LAMMPS_PNG
+  int aafactor = fsaa ? 2 : 1;
   png_structp png_ptr;
   png_infop info_ptr;
 
-  png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+  png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, nullptr, nullptr, nullptr);
 
   if (!png_ptr) return;
 
   info_ptr = png_create_info_struct(png_ptr);
   if (!info_ptr) {
-    png_destroy_write_struct(&png_ptr, NULL);
+    png_destroy_write_struct(&png_ptr, nullptr);
     return;
   }
 
@@ -1045,8 +1130,8 @@ void Image::write_PNG(FILE *fp)
   }
 
   png_init_io(png_ptr, fp);
-  png_set_compression_level(png_ptr,Z_BEST_COMPRESSION);
-  png_set_IHDR(png_ptr,info_ptr,width,height,8,PNG_COLOR_TYPE_RGB,
+  png_set_compression_level(png_ptr,Z_BEST_SPEED);
+  png_set_IHDR(png_ptr,info_ptr,width/aafactor,height/aafactor,8,PNG_COLOR_TYPE_RGB,
     PNG_INTERLACE_NONE,PNG_COMPRESSION_TYPE_DEFAULT,PNG_FILTER_TYPE_DEFAULT);
 
   png_text text_ptr[2];
@@ -1066,9 +1151,9 @@ void Image::write_PNG(FILE *fp)
   png_set_text(png_ptr,info_ptr,text_ptr,1);
   png_write_info(png_ptr,info_ptr);
 
-  png_bytep *row_pointers = new png_bytep[height];
-  for (int i=0; i < height; ++i)
-    row_pointers[i] = (png_bytep) &writeBuffer[(height-i-1)*3*width];
+  auto row_pointers = new png_bytep[height/aafactor];
+  for (int i=0; i < height/aafactor; ++i)
+    row_pointers[i] = (png_bytep) &writeBuffer[((height/aafactor)-i-1)*3*(width/aafactor)];
 
   png_write_image(png_ptr, row_pointers);
   png_write_end(png_ptr, info_ptr);
@@ -1084,11 +1169,12 @@ void Image::write_PNG(FILE *fp)
 
 void Image::write_PPM(FILE *fp)
 {
-  fprintf(fp,"P6\n%d %d\n255\n",width,height);
+  int aafactor = fsaa ? 2 : 1;
+  fprintf(fp,"P6\n%d %d\n255\n",width/aafactor,height/aafactor);
 
   int y;
-  for (y = height-1; y >= 0; y--)
-    fwrite(&writeBuffer[y*width*3],3,width,fp);
+  for (y = (height/aafactor)-1; y >= 0; y--)
+    fwrite(&writeBuffer[y*(width/aafactor)*3],3,width/aafactor,fp);
 }
 
 /* ----------------------------------------------------------------------
@@ -1166,7 +1252,7 @@ int Image::addcolor(char *name, double r, double g, double b)
    if index < 0, return ptr to -index-1 color from userrgb
    if index = 0, search the 2 lists of color names for the string color
    search user-defined color names first, then the list of NCOLORS names
-   return a pointer to the 3 floating point RGB values or NULL if didn't find
+   return a pointer to the 3 floating point RGB values or nullptr if didn't find
 ------------------------------------------------------------------------- */
 
 double *Image::color2rgb(const char *color, int index)
@@ -1339,7 +1425,7 @@ double *Image::color2rgb(const char *color, int index)
     {0/255.0, 0/255.0, 139/255.0},
     {0/255.0, 139/255.0, 139/255.0},
     {184/255.0, 134/255.0, 11/255.0},
-    {169/255.0, 169/255.0, 169/255.0},
+    {69/255.0, 69/255.0, 69/255.0},
     {0/255.0, 100/255.0, 0/255.0},
     {189/255.0, 183/255.0, 107/255.0},
     {139/255.0, 0/255.0, 139/255.0},
@@ -1458,11 +1544,11 @@ double *Image::color2rgb(const char *color, int index)
   };
 
   if (index > 0) {
-    if (index > NCOLORS) return NULL;
+    if (index > NCOLORS) return nullptr;
     return rgb[index-1];
   }
   if (index < 0) {
-    if (-index > ncolors) return NULL;
+    if (-index > ncolors) return nullptr;
     return userrgb[-index-1];
   }
 
@@ -1472,7 +1558,7 @@ double *Image::color2rgb(const char *color, int index)
     for (int i = 0; i < NCOLORS; i++)
       if (strcmp(color,name[i]) == 0) return rgb[i];
   }
-  return NULL;
+  return nullptr;
 }
 
 /* ----------------------------------------------------------------------
@@ -1620,7 +1706,7 @@ double *Image::element2color(char *element)
 
   for (int i = 0; i < NELEMENTS; i++)
     if (strcmp(element,name[i]) == 0) return rgb[i];
-  return NULL;
+  return nullptr;
 }
 
 /* ----------------------------------------------------------------------
@@ -1708,13 +1794,13 @@ int ColorMap::reset(int narg, char **arg)
 {
   if (!islower(arg[0][0])) {
     mlo = NUMERIC;
-    mlovalue = force->numeric(FLERR,arg[0]);
+    mlovalue = utils::numeric(FLERR,arg[0],false,lmp);
   } else if (strcmp(arg[0],"min") == 0) mlo = MINVALUE;
   else return 1;
 
   if (!islower(arg[1][0])) {
     mhi = NUMERIC;
-    mhivalue = force->numeric(FLERR,arg[1]);
+    mhivalue = utils::numeric(FLERR,arg[1],false,lmp);
   } else if (strcmp(arg[1],"max") == 0) mhi = MAXVALUE;
   else return 1;
 
@@ -1733,12 +1819,12 @@ int ColorMap::reset(int narg, char **arg)
   else return 1;
 
   if (mstyle == SEQUENTIAL) {
-    mbinsize = force->numeric(FLERR,arg[3]);
+    mbinsize = utils::numeric(FLERR,arg[3],false,lmp);
     if (mbinsize <= 0.0) return 1;
     mbinsizeinv = 1.0/mbinsize;
   }
 
-  nentry = force->inumeric(FLERR,arg[4]);
+  nentry = utils::inumeric(FLERR,arg[4],false,lmp);
   if (nentry < 1) return 1;
   delete [] mentry;
   mentry = new MapEntry[nentry];
@@ -1751,7 +1837,7 @@ int ColorMap::reset(int narg, char **arg)
       if (n+2 > narg) return 1;
       if (!islower(arg[n][0])) {
         mentry[i].single = NUMERIC;
-        mentry[i].svalue = force->numeric(FLERR,arg[n]);
+        mentry[i].svalue = utils::numeric(FLERR,arg[n],false,lmp);
       } else if (strcmp(arg[n],"min") == 0) mentry[i].single = MINVALUE;
       else if (strcmp(arg[n],"max") == 0) mentry[i].single = MAXVALUE;
       else return 1;
@@ -1761,13 +1847,13 @@ int ColorMap::reset(int narg, char **arg)
       if (n+3 > narg) return 1;
       if (!islower(arg[n][0])) {
         mentry[i].lo = NUMERIC;
-        mentry[i].lvalue = force->numeric(FLERR,arg[n]);
+        mentry[i].lvalue = utils::numeric(FLERR,arg[n],false,lmp);
       } else if (strcmp(arg[n],"min") == 0) mentry[i].lo = MINVALUE;
       else if (strcmp(arg[n],"max") == 0) mentry[i].lo = MAXVALUE;
       else return 1;
       if (!islower(arg[n+1][0])) {
         mentry[i].hi = NUMERIC;
-        mentry[i].hvalue = force->numeric(FLERR,arg[n+1]);
+        mentry[i].hvalue = utils::numeric(FLERR,arg[n+1],false,lmp);
       } else if (strcmp(arg[n+1],"min") == 0) mentry[i].hi = MINVALUE;
       else if (strcmp(arg[n+1],"max") == 0) mentry[i].hi = MAXVALUE;
       else return 1;
@@ -1791,13 +1877,13 @@ int ColorMap::reset(int narg, char **arg)
         if (n+1 > narg) return 1;
         mentry[i].color = image->color2rgb(arg[n]);
       } else if (expandflag == 1) {
-        mentry[i].color = image->color2rgb(NULL,i+1);
+        mentry[i].color = image->color2rgb(nullptr,i+1);
       } else if (expandflag == 2) {
-        mentry[i].color = image->color2rgb(NULL,-(i+1));
+        mentry[i].color = image->color2rgb(nullptr,-(i+1));
       }
       n += 1;
     }
-    if (mentry[i].color == NULL) return 1;
+    if (mentry[i].color == nullptr) return 1;
   }
 
   if (mstyle == CONTINUOUS) {
@@ -1915,5 +2001,5 @@ double *ColorMap::value2color(double value)
     return mentry[ibin%nentry].color;
   }
 
-  return NULL;
+  return nullptr;
 }

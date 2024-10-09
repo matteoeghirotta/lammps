@@ -15,6 +15,9 @@
 #include "colvarparse.h"
 #include "colvardeps.h"
 
+template <typename T1, typename T2>
+struct rotation_derivative;
+
 
 /// \brief Stores numeric id, mass and all mutable data for an atom,
 /// mostly used by a \link colvar::cvc \endlink
@@ -90,6 +93,9 @@ public:
   /// Destructor
   ~atom();
 
+  /// Assignment operator (added to appease LGTM)
+  atom & operator = (atom const &a);
+
   /// Set mutable data (everything except id and mass) to zero
   inline void reset_data()
   {
@@ -101,18 +107,14 @@ public:
   inline void update_mass()
   {
     colvarproxy *p = cvm::proxy;
-    if (p->updated_masses()) {
-      mass = p->get_atom_mass(index);
-    }
+    mass = p->get_atom_mass(index);
   }
 
   /// Get the latest value of the charge
   inline void update_charge()
   {
     colvarproxy *p = cvm::proxy;
-    if (p->updated_charges()) {
-      charge = p->get_atom_charge(index);
-    }
+    charge = p->get_atom_charge(index);
   }
 
   /// Get the current position
@@ -168,7 +170,7 @@ public:
   atom_group(std::vector<cvm::atom> const &atoms_in);
 
   /// \brief Destructor
-  ~atom_group();
+  ~atom_group() override;
 
   /// \brief Optional name to reuse properties of this in other groups
   std::string name;
@@ -181,7 +183,7 @@ public:
   int init();
 
   /// \brief Initialize dependency tree
-  virtual int init_dependencies();
+  int init_dependencies() override;
 
   /// \brief Update data required to calculate cvc's
   int setup();
@@ -222,16 +224,13 @@ public:
   static std::vector<feature *> ag_features;
 
   /// \brief Implementation of the feature list accessor for atom group
-  virtual const std::vector<feature *> &features() const
+  const std::vector<feature *> &features() const override { return ag_features; }
+
+  std::vector<feature *> &modify_features() override { return ag_features; }
+
+  static void delete_features()
   {
-    return ag_features;
-  }
-  virtual std::vector<feature *> &modify_features()
-  {
-    return ag_features;
-  }
-  static void delete_features() {
-    for (size_t i=0; i < ag_features.size(); i++) {
+    for (size_t i = 0; i < ag_features.size(); i++) {
       delete ag_features[i];
     }
     ag_features.clear();
@@ -328,35 +327,26 @@ public:
   /// If yes, returns 1-based number of a common atom; else, returns 0
   static int overlap(const atom_group &g1, const atom_group &g2);
 
-  /// \brief When updating atomic coordinates, translate them to align with the
-  /// center of mass of the reference coordinates
-  bool b_center;
-
-  /// \brief When updating atom coordinates (and after
-  /// centering them if b_center is set), rotate the group to
-  /// align with the reference coordinates.
-  ///
-  /// Note: gradients will be calculated in the rotated frame: when
-  /// forces will be applied, they will rotated back to the original
-  /// frame
-  bool b_rotate;
-  /// The rotation calculated automatically if b_rotate is defined
+  /// The rotation calculated automatically if f_ag_rotate is defined
   cvm::rotation rot;
 
-  /// \brief Indicates that the user has explicitly set centerReference or
+  /// Rotation derivative;
+  rotation_derivative<cvm::atom, cvm::atom_pos>* rot_deriv;
+
+  /// \brief Indicates that the user has explicitly set centerToReference or
   /// rotateReference, and the corresponding reference:
   /// cvc's (eg rmsd, eigenvector) will not override the user's choice
   bool b_user_defined_fit;
 
-  /// \brief use reference coordinates for b_center or b_rotate
+  /// \brief use reference coordinates for f_ag_center or f_ag_rotate
   std::vector<cvm::atom_pos> ref_pos;
 
   /// \brief Center of geometry of the reference coordinates; regardless
-  /// of whether b_center is true, ref_pos is centered to zero at
+  /// of whether f_ag_center is true, ref_pos is centered to zero at
   /// initialization, and ref_pos_cog serves to center the positions
   cvm::atom_pos              ref_pos_cog;
 
-  /// \brief If b_center or b_rotate is true, use this group to
+  /// \brief If f_ag_center or f_ag_rotate is true, use this group to
   /// define the transformation (default: this group itself)
   atom_group                *fitting_group;
 
@@ -382,6 +372,8 @@ public:
   /// \brief (Re)calculate the optimal roto-translation
   void calc_apply_roto_translation();
 
+  void setup_rotation_derivative();
+
   /// \brief Save aside the center of geometry of the reference positions,
   /// then subtract it from them
   ///
@@ -395,12 +387,12 @@ public:
   void apply_translation(cvm::rvector const &t);
 
   /// \brief Get the current velocities; this must be called always
-  /// *after* read_positions(); if b_rotate is defined, the same
+  /// *after* read_positions(); if f_ag_rotate is defined, the same
   /// rotation applied to the coordinates will be used
   void read_velocities();
 
   /// \brief Get the current total_forces; this must be called always
-  /// *after* read_positions(); if b_rotate is defined, the same
+  /// *after* read_positions(); if f_ag_rotate is defined, the same
   /// rotation applied to the coordinates will be used
   void read_total_forces();
 
@@ -505,6 +497,16 @@ public:
   /// \brief Calculate the derivatives of the fitting transformation
   void calc_fit_gradients();
 
+/*! @brief  Actual implementation of `calc_fit_gradients`. The template is
+ *          used to avoid branching inside the loops in case that the CPU
+ *          branch prediction is broken (or further migration to GPU code).
+ *  @tparam B_ag_center Centered the reference to origin? This should follow
+ *          the value of `is_enabled(f_ag_center)`.
+ *  @tparam B_ag_rotate Calculate the optimal rotation? This should follow
+ *          the value of `is_enabled(f_ag_rotate)`.
+ */
+  template <bool B_ag_center, bool B_ag_rotate> void calc_fit_gradients_impl();
+
   /// \brief Derivatives of the fitting transformation
   std::vector<cvm::atom_pos> fit_gradients;
 
@@ -538,7 +540,7 @@ public:
   /// Implements possible actions to be carried out
   /// when a given feature is enabled
   /// This overloads the base function in colvardeps
-  void do_feature_side_effects(int id);
+  void do_feature_side_effects(int id) override;
 };
 
 

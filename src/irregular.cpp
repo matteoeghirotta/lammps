@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,15 +13,16 @@
 ------------------------------------------------------------------------- */
 
 #include "irregular.h"
-#include <mpi.h>
-#include <cstring>
+
 #include "atom.h"
 #include "atom_vec.h"
-#include "domain.h"
 #include "comm.h"
-#include "modify.h"
+#include "domain.h"
 #include "fix.h"
 #include "memory.h"
+#include "modify.h"
+
+#include <cstring>
 
 using namespace LAMMPS_NS;
 
@@ -30,21 +32,24 @@ using namespace LAMMPS_NS;
 int *Irregular::proc_recv_copy;
 static int compare_standalone(const void *, const void *);
 #else
-#include "mergesort.h"
 // prototype for non-class function
 static int compare_standalone(const int, const int, void *);
 #endif
 
-#define BUFFACTOR 1.5
-#define BUFMIN 1024
-#define BUFEXTRA 1024
+static constexpr double BUFFACTOR = 1.5;
+static constexpr int BUFMIN = 1024;
+static constexpr int BUFEXTRA = 1024;
 
 /* ---------------------------------------------------------------------- */
 
-Irregular::Irregular(LAMMPS *lmp) : Pointers(lmp)
+Irregular::Irregular(LAMMPS *lmp) :
+    Pointers(lmp), buf_send(nullptr), buf_recv(nullptr), dbuf(nullptr), buf(nullptr),
+    mproclist(nullptr), msizes(nullptr), proc_send(nullptr), num_send(nullptr), index_send(nullptr),
+    proc_recv(nullptr), request(nullptr), status(nullptr), length_send(nullptr),
+    length_recv(nullptr), offset_send(nullptr), num_recv(nullptr), index_self(nullptr)
 {
-  MPI_Comm_rank(world,&me);
-  MPI_Comm_size(world,&nprocs);
+  MPI_Comm_rank(world, &me);
+  MPI_Comm_size(world, &nprocs);
 
   triclinic = domain->triclinic;
   map_style = atom->map_style;
@@ -52,29 +57,24 @@ Irregular::Irregular(LAMMPS *lmp) : Pointers(lmp)
   // migrate work vectors
 
   maxlocal = 0;
-  mproclist = NULL;
-  msizes = NULL;
 
   // send buffers
 
   maxdbuf = 0;
-  dbuf = NULL;
   maxbuf = 0;
-  buf = NULL;
 
   // universal work vectors
 
-  memory->create(work1,nprocs,"irregular:work1");
-  memory->create(work2,nprocs,"irregular:work2");
+  memory->create(work1, nprocs, "irregular:work1");
+  memory->create(work2, nprocs, "irregular:work2");
 
   // initialize buffers for migrate atoms, not used for datum comm
   // these can persist for multiple irregular operations
 
-  buf_send = buf_recv = NULL;
   maxsend = maxrecv = BUFMIN;
   bufextra = BUFEXTRA;
-  grow_send(maxsend,2);
-  memory->create(buf_recv,maxrecv,"comm:buf_recv");
+  grow_send(maxsend, 2);
+  memory->create(buf_recv, maxrecv, "comm:buf_recv");
 }
 
 /* ---------------------------------------------------------------------- */
@@ -117,7 +117,7 @@ void Irregular::migrate_atoms(int sortflag, int preassign, int *procassign)
   // exchange() doesn't need to clear ghosts b/c borders()
   //   is called right after and it clears ghosts and calls map_set()
 
-  if (map_style) atom->map_clear();
+  if (map_style != Atom::MAP_NONE) atom->map_clear();
   atom->nghost = 0;
   atom->avec->clear_bonus();
 
@@ -426,7 +426,7 @@ int Irregular::create_atom(int n, int *sizes, int *proclist, int sortflag)
   }
 
   // sort proc_recv and length_recv by proc ID if requested
-  // useful for debugging to insure reproducible ordering of received atoms
+  // useful for debugging to ensure reproducible ordering of received atoms
   // invoke by adding final arg = 1 to create_atom() call in migrate_atoms()
 
   if (sortflag) {
@@ -440,7 +440,7 @@ int Irregular::create_atom(int n, int *sizes, int *proclist, int sortflag)
     proc_recv_copy = proc_recv;
     qsort(order,nrecv_proc,sizeof(int),compare_standalone);
 #else
-    merge_sort(order,nrecv_proc,(void *)proc_recv,compare_standalone);
+    utils::merge_sort(order,nrecv_proc,(void *)proc_recv,compare_standalone);
 #endif
 
     int j;
@@ -452,12 +452,12 @@ int Irregular::create_atom(int n, int *sizes, int *proclist, int sortflag)
 
     memcpy(proc_recv,proc_recv_ordered,nrecv_proc*sizeof(int));
     memcpy(length_recv,length_recv_ordered,nrecv_proc*sizeof(int));
-    delete [] order;
-    delete [] proc_recv_ordered;
-    delete [] length_recv_ordered;
+    delete[] order;
+    delete[] proc_recv_ordered;
+    delete[] length_recv_ordered;
   }
 
-  // barrier to insure all MPI_ANY_SOURCE messages are received
+  // barrier to ensure all MPI_ANY_SOURCE messages are received
   // else another proc could proceed to exchange_atom() and send to me
 
   MPI_Barrier(world);
@@ -701,7 +701,7 @@ int Irregular::create_data(int n, int *proclist, int sortflag)
   nrecvdatum += num_self;
 
   // sort proc_recv and num_recv by proc ID if requested
-  // useful for debugging to insure reproducible ordering of received datums
+  // useful for debugging to ensure reproducible ordering of received datums
 
   if (sortflag) {
     int *order = new int[nrecv_proc];
@@ -714,7 +714,7 @@ int Irregular::create_data(int n, int *proclist, int sortflag)
     proc_recv_copy = proc_recv;
     qsort(order,nrecv_proc,sizeof(int),compare_standalone);
 #else
-    merge_sort(order,nrecv_proc,(void *)proc_recv,compare_standalone);
+    utils::merge_sort(order,nrecv_proc,(void *)proc_recv,compare_standalone);
 #endif
 
     int j;
@@ -726,12 +726,12 @@ int Irregular::create_data(int n, int *proclist, int sortflag)
 
     memcpy(proc_recv,proc_recv_ordered,nrecv_proc*sizeof(int));
     memcpy(num_recv,num_recv_ordered,nrecv_proc*sizeof(int));
-    delete [] order;
-    delete [] proc_recv_ordered;
-    delete [] num_recv_ordered;
+    delete[] order;
+    delete[] proc_recv_ordered;
+    delete[] num_recv_ordered;
   }
 
-  // barrier to insure all MPI_ANY_SOURCE messages are received
+  // barrier to ensure all MPI_ANY_SOURCE messages are received
   // else another proc could proceed to exchange_data() and send to me
 
   MPI_Barrier(world);
@@ -875,7 +875,7 @@ int Irregular::create_data_grouped(int n, int *procs, int sortflag)
   nrecvdatum += num_self;
 
   // sort proc_recv and num_recv by proc ID if requested
-  // useful for debugging to insure reproducible ordering of received datums
+  // useful for debugging to ensure reproducible ordering of received datums
 
   if (sortflag) {
     int *order = new int[nrecv_proc];
@@ -888,10 +888,9 @@ int Irregular::create_data_grouped(int n, int *procs, int sortflag)
     proc_recv_copy = proc_recv;
     qsort(order,nrecv_proc,sizeof(int),compare_standalone);
 #else
-    merge_sort(order,nrecv_proc,(void *)proc_recv,compare_standalone);
+    utils::merge_sort(order,nrecv_proc,(void *)proc_recv,compare_standalone);
 #endif
 
-    int j;
     for (i = 0; i < nrecv_proc; i++) {
       j = order[i];
       proc_recv_ordered[i] = proc_recv[j];
@@ -900,12 +899,12 @@ int Irregular::create_data_grouped(int n, int *procs, int sortflag)
 
     memcpy(proc_recv,proc_recv_ordered,nrecv_proc*sizeof(int));
     memcpy(num_recv,num_recv_ordered,nrecv_proc*sizeof(int));
-    delete [] order;
-    delete [] proc_recv_ordered;
-    delete [] num_recv_ordered;
+    delete[] order;
+    delete[] proc_recv_ordered;
+    delete[] num_recv_ordered;
   }
 
-  // barrier to insure all MPI_ANY_SOURCE messages are received
+  // barrier to ensure all MPI_ANY_SOURCE messages are received
   // else another proc could proceed to exchange_data() and send to me
 
   MPI_Barrier(world);
@@ -930,11 +929,11 @@ void Irregular::exchange_data(char *sendbuf, int nbytes, char *recvbuf)
 
   // post all receives, starting after self copies
 
-  bigint offset = num_self*(bigint)nbytes;
+  bigint offset = (bigint)num_self*(bigint)nbytes;
   for (int irecv = 0; irecv < nrecv_proc; irecv++) {
     MPI_Irecv(&recvbuf[offset],num_recv[irecv]*nbytes,MPI_CHAR,
               proc_recv[irecv],0,world,&request[irecv]);
-    offset += num_recv[irecv]*nbytes;
+    offset += (bigint)num_recv[irecv]*nbytes;
   }
 
   // reallocate buf for largest send if necessary
@@ -998,18 +997,11 @@ void Irregular::destroy_data()
 
 void Irregular::init_exchange()
 {
-  int nfix = modify->nfix;
-  Fix **fix = modify->fix;
-
-  int onefix;
   int maxexchange_fix = 0;
-  for (int i = 0; i < nfix; i++) {
-    onefix = fix[i]->maxexchange;
-    maxexchange_fix = MAX(maxexchange_fix,onefix);
-  }
+  for (auto &ifix : modify->get_fix_list())
+    maxexchange_fix = MAX(maxexchange_fix, ifix->maxexchange);
 
-  int maxexchange = atom->avec->maxexchange + maxexchange_fix;
-  bufextra = maxexchange + BUFEXTRA;
+  bufextra = atom->avec->maxexchange + maxexchange_fix + BUFEXTRA;
 }
 
 /* ----------------------------------------------------------------------
@@ -1051,14 +1043,14 @@ void Irregular::grow_recv(int n)
    return # of bytes of allocated memory
 ------------------------------------------------------------------------- */
 
-bigint Irregular::memory_usage()
+double Irregular::memory_usage()
 {
-  bigint bytes = 0;
-  bytes += maxsend*sizeof(double);   // buf_send
-  bytes += maxrecv*sizeof(double);   // buf_recv
-  bytes += maxdbuf*sizeof(double);   // dbuf
-  bytes += maxbuf;                   // buf
-  bytes += 2*maxlocal*sizeof(int);   // mproclist,msizes
-  bytes += 2*nprocs*sizeof(int);     // work1,work2
+  double bytes = 0;
+  bytes += (double)maxsend*sizeof(double);   // buf_send
+  bytes += (double)maxrecv*sizeof(double);   // buf_recv
+  bytes += (double)maxdbuf*sizeof(double);   // dbuf
+  bytes += (double)maxbuf;                   // buf
+  bytes += (double)2*maxlocal*sizeof(int);   // mproclist,msizes
+  bytes += (double)2*nprocs*sizeof(int);     // work1,work2
   return bytes;
 }

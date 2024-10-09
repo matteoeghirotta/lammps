@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -21,19 +22,12 @@
 
 using namespace LAMMPS_NS;
 
-#define BIG   1.0e20
-#define SMALL 1.0e-4
+static constexpr double BIG = 1.0e20;
 
 /* ---------------------------------------------------------------------- */
 
-DomainKokkos::DomainKokkos(LAMMPS *lmp) : Domain(lmp) {}
-
-/* ---------------------------------------------------------------------- */
-
-void DomainKokkos::init()
-{
+DomainKokkos::DomainKokkos(LAMMPS *lmp) : Domain(lmp) {
   atomKK = (AtomKokkos *) atom;
-  Domain::init();
 }
 
 /* ----------------------------------------------------------------------
@@ -62,8 +56,8 @@ public:
   }
 
   KOKKOS_INLINE_FUNCTION
-  void join(volatile value_type &dst,
-             const volatile value_type &src) const {
+  void join(value_type &dst,
+             const value_type &src) const {
     dst.value[0][0] = MIN(dst.value[0][0],src.value[0][0]);
     dst.value[0][1] = MAX(dst.value[0][1],src.value[0][1]);
     dst.value[1][0] = MIN(dst.value[1][0],src.value[1][0]);
@@ -86,6 +80,11 @@ public:
 void DomainKokkos::reset_box()
 {
   // perform shrink-wrapping
+
+  // nothing to do for empty systems
+
+  if (atom->natoms == 0) return;
+
   // compute extent of atoms on this proc
   // for triclinic, this is done in lamda space
 
@@ -235,7 +234,7 @@ struct DomainPBCFunctor {
     x(_x.view<DeviceType>()), v(_v.view<DeviceType>()),
     mask(_mask.view<DeviceType>()), image(_image.view<DeviceType>()),
     deform_groupbit(_deform_groupbit),
-    xperiodic(_xperiodic), yperiodic(_yperiodic), zperiodic(_zperiodic){
+    xperiodic(_xperiodic), yperiodic(_yperiodic), zperiodic(_zperiodic) {
     lo[0]=_lo[0]; lo[1]=_lo[1]; lo[2]=_lo[2];
     hi[0]=_hi[0]; hi[1]=_hi[1]; hi[2]=_hi[2];
     period[0]=_period[0]; period[1]=_period[1]; period[2]=_period[2];
@@ -564,7 +563,6 @@ void DomainKokkos::operator()(TagDomain_image_flip, const int &i) const {
 void DomainKokkos::lamda2x(int n)
 {
   atomKK->sync(Device,X_MASK);
-
   x = atomKK->k_x.view<LMPDeviceType>();
 
   copymode = 1;
@@ -574,11 +572,39 @@ void DomainKokkos::lamda2x(int n)
   atomKK->modified(Device,X_MASK);
 }
 
+void DomainKokkos::lamda2x(int n, int groupbit_in)
+{
+  atomKK->sync(Device,X_MASK);
+  x = atomKK->k_x.view<LMPDeviceType>();
+  mask = atomKK->k_mask.view<LMPDeviceType>();
+  mask = atomKK->k_mask.view<LMPDeviceType>();
+  groupbit = groupbit_in;
+
+  copymode = 1;
+  Kokkos::parallel_for(Kokkos::RangePolicy<LMPDeviceType, TagDomain_lamda2x_group>(0,n),*this);
+  copymode = 0;
+
+  atomKK->modified(Device,X_MASK);
+}
+
 KOKKOS_INLINE_FUNCTION
 void DomainKokkos::operator()(TagDomain_lamda2x, const int &i) const {
-  x(i,0) = h[0]*x(i,0) + h[5]*x(i,1) + h[4]*x(i,2) + boxlo[0];
-  x(i,1) = h[1]*x(i,1) + h[3]*x(i,2) + boxlo[1];
-  x(i,2) = h[2]*x(i,2) + boxlo[2];
+  const double xi1 = x(i,1);
+  const double xi2 = x(i,2);
+  x(i,0) = h[0]*x(i,0) + h[5]*xi1 + h[4]*xi2 + boxlo[0];
+  x(i,1) = h[1]*xi1 + h[3]*xi2 + boxlo[1];
+  x(i,2) = h[2]*xi2 + boxlo[2];
+}
+
+KOKKOS_INLINE_FUNCTION
+void DomainKokkos::operator()(TagDomain_lamda2x_group, const int &i) const {
+  if (mask[i] & groupbit) {
+    const double xi1 = x(i,1);
+    const double xi2 = x(i,2);
+    x(i,0) = h[0]*x(i,0) + h[5]*xi1 + h[4]*xi2 + boxlo[0];
+    x(i,1) = h[1]*xi1 + h[3]*xi2 + boxlo[1];
+    x(i,2) = h[2]*xi2 + boxlo[2];
+  }
 }
 
 /* ----------------------------------------------------------------------
@@ -589,11 +615,24 @@ void DomainKokkos::operator()(TagDomain_lamda2x, const int &i) const {
 void DomainKokkos::x2lamda(int n)
 {
   atomKK->sync(Device,X_MASK);
-
   x = atomKK->k_x.view<LMPDeviceType>();
 
   copymode = 1;
   Kokkos::parallel_for(Kokkos::RangePolicy<LMPDeviceType, TagDomain_x2lamda>(0,n),*this);
+  copymode = 0;
+
+  atomKK->modified(Device,X_MASK);
+}
+
+void DomainKokkos::x2lamda(int n, int groupbit_in)
+{
+  atomKK->sync(Device,X_MASK);
+  x = atomKK->k_x.view<LMPDeviceType>();
+  mask = atomKK->k_mask.view<LMPDeviceType>();
+  groupbit = groupbit_in;
+
+  copymode = 1;
+  Kokkos::parallel_for(Kokkos::RangePolicy<LMPDeviceType, TagDomain_x2lamda_group>(0,n),*this);
   copymode = 0;
 
   atomKK->modified(Device,X_MASK);
@@ -609,5 +648,19 @@ void DomainKokkos::operator()(TagDomain_x2lamda, const int &i) const {
   x(i,0) = h_inv[0]*delta[0] + h_inv[5]*delta[1] + h_inv[4]*delta[2];
   x(i,1) = h_inv[1]*delta[1] + h_inv[3]*delta[2];
   x(i,2) = h_inv[2]*delta[2];
+}
+
+KOKKOS_INLINE_FUNCTION
+void DomainKokkos::operator()(TagDomain_x2lamda_group, const int &i) const {
+  if (mask[i] & groupbit) {
+    F_FLOAT delta[3];
+    delta[0] = x(i,0) - boxlo[0];
+    delta[1] = x(i,1) - boxlo[1];
+    delta[2] = x(i,2) - boxlo[2];
+
+    x(i,0) = h_inv[0]*delta[0] + h_inv[5]*delta[1] + h_inv[4]*delta[2];
+    x(i,1) = h_inv[1]*delta[1] + h_inv[3]*delta[2];
+    x(i,2) = h_inv[2]*delta[2];
+  }
 }
 

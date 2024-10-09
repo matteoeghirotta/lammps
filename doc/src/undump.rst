@@ -6,8 +6,7 @@ undump command
 Syntax
 """"""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    undump dump-ID
 
@@ -16,8 +15,7 @@ Syntax
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    undump mine
    undump 2
@@ -37,4 +35,7 @@ Related commands
 
 :doc:`dump <dump>`
 
-**Default:** none
+Default
+"""""""
+
+none

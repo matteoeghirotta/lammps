@@ -6,8 +6,7 @@ unfix command
 Syntax
 """"""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    unfix fix-ID
 
@@ -16,8 +15,7 @@ Syntax
 Examples
 """"""""
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    unfix 2
    unfix lower-boundary
@@ -38,4 +36,7 @@ Related commands
 
 :doc:`fix <fix>`
 
-**Default:** none
+Default
+"""""""
+
+none

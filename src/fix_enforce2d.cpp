@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,13 +13,12 @@
 ------------------------------------------------------------------------- */
 
 #include "fix_enforce2d.h"
-#include <cstring>
+
 #include "atom.h"
-#include "update.h"
 #include "domain.h"
-#include "modify.h"
-#include "respa.h"
 #include "error.h"
+#include "respa.h"
+#include "update.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
@@ -26,12 +26,9 @@ using namespace FixConst;
 /* ---------------------------------------------------------------------- */
 
 FixEnforce2D::FixEnforce2D(LAMMPS *lmp, int narg, char **arg) :
-  Fix(lmp, narg, arg),
-  flist(NULL)
+  Fix(lmp, narg, arg)
 {
   if (narg != 3) error->all(FLERR,"Illegal fix enforce2d command");
-
-  nfixlist = 0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -39,8 +36,6 @@ FixEnforce2D::FixEnforce2D(LAMMPS *lmp, int narg, char **arg) :
 FixEnforce2D::~FixEnforce2D()
 {
   if (copymode) return;
-
-  delete [] flist;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -60,45 +55,20 @@ void FixEnforce2D::init()
 {
   if (domain->dimension == 3)
     error->all(FLERR,"Cannot use fix enforce2d with 3d simulation");
-
-  // list of fixes with enforce2d methods
-
-  nfixlist = 0;
-  for (int i = 0; i < modify->nfix; i++)
-    if (modify->fix[i]->enforce2d_flag) nfixlist++;
-
-  if (nfixlist) {
-    int myindex = -1;
-    delete [] flist;
-    flist = new Fix*[nfixlist];
-    nfixlist = 0;
-    for (int i = 0; i < modify->nfix; i++) {
-      if (modify->fix[i]->enforce2d_flag) {
-        if (myindex < 0)
-          flist[nfixlist++] = modify->fix[i];
-        else {
-          char msg[256];
-          snprintf(msg,256,"Fix enforce2d must be defined after fix %s",modify->fix[i]->style);
-          error->all(FLERR,msg);
-        }
-      }
-      if (modify->fix[i] == this) myindex = i;
-    }
-  }
 }
 
 /* ---------------------------------------------------------------------- */
 
 void FixEnforce2D::setup(int vflag)
 {
-  if (strstr(update->integrate_style,"verlet"))
+  if (utils::strmatch(update->integrate_style,"^verlet"))
     post_force(vflag);
   else {
-    int nlevels_respa = ((Respa *) update->integrate)->nlevels;
+    int nlevels_respa = (dynamic_cast<Respa *>(update->integrate))->nlevels;
     for (int ilevel = 0; ilevel < nlevels_respa; ilevel++) {
-      ((Respa *) update->integrate)->copy_flevel_f(ilevel);
+      (dynamic_cast<Respa *>(update->integrate))->copy_flevel_f(ilevel);
       post_force_respa(vflag,ilevel,0);
-      ((Respa *) update->integrate)->copy_f_flevel(ilevel);
+      (dynamic_cast<Respa *>(update->integrate))->copy_f_flevel(ilevel);
     }
   }
 }
@@ -154,12 +124,6 @@ void FixEnforce2D::post_force(int /*vflag*/)
         torque[i][1] = 0.0;
       }
   }
-
-  // invoke other fixes that enforce 2d
-  // fix rigid variants
-
-  for (int m = 0; m < nfixlist; m++)
-    flist[m]->enforce2d();
 }
 
 /* ---------------------------------------------------------------------- */

@@ -1,7 +1,7 @@
 /* -*- c++ -*- ----------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -12,13 +12,14 @@
 ------------------------------------------------------------------------- */
 
 #ifdef FIX_CLASS
-
-FixStyle(deform/kk,FixDeformKokkos)
-FixStyle(deform/kk/device,FixDeformKokkos)
-FixStyle(deform/kk/host,FixDeformKokkos)
-
+// clang-format off
+FixStyle(deform/kk,FixDeformKokkos);
+FixStyle(deform/kk/device,FixDeformKokkos);
+FixStyle(deform/kk/host,FixDeformKokkos);
+// clang-format on
 #else
 
+// clang-format off
 #ifndef LMP_FIX_DEFORM_KOKKOS_H
 #define LMP_FIX_DEFORM_KOKKOS_H
 
@@ -28,14 +29,10 @@ namespace LAMMPS_NS {
 
 class FixDeformKokkos : public FixDeform {
  public:
-
   FixDeformKokkos(class LAMMPS *, int, char **);
-  virtual ~FixDeformKokkos() {}
-  void pre_exchange();
-  void end_of_step();
 
- private:
-  class DomainKokkos *domainKK;
+  void pre_exchange() override;
+  void end_of_step() override;
 
 };
 
@@ -43,11 +40,3 @@ class FixDeformKokkos : public FixDeform {
 
 #endif
 #endif
-
-/* ERROR/WARNING messages:
-
-E: Cannot (yet) use rigid bodies with fix deform and Kokkos
-
-Self-explanatory.
-
-*/

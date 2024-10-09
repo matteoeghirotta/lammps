@@ -1,11 +1,13 @@
 .. index:: angle_style hybrid
+.. index:: angle_style hybrid/kk
 
 angle_style hybrid command
 ==========================
 
+Accelerator Variants: *hybrid/kk*
+
 Syntax
 """"""
-
 
 .. code-block:: LAMMPS
 
@@ -15,7 +17,6 @@ Syntax
 
 Examples
 """"""""
-
 
 .. code-block:: LAMMPS
 
@@ -36,7 +37,7 @@ command or in the data file.
 
 In the :doc:`angle_coeff <angle_coeff>` commands, the name of an angle style must be added
 after the angle type, with the remaining coefficients being those
-appropriate to that style.  In the example above, the 2 angle\_coeff
+appropriate to that style.  In the example above, the 2 angle_coeff
 commands set angles of angle type 1 to be computed with a *harmonic*
 potential with coefficients 80.0, 30.0 for :math:`K`, :math:`\theta_0`.  All other angle
 types :math:`(2 - N)` are computed with a *cosine* potential with coefficient
@@ -46,7 +47,6 @@ If angle coefficients are specified in the data file read via the
 :doc:`read_data <read_data>` command, then the same rule applies.
 E.g. "harmonic" or "cosine", must be added after the angle type, for each
 line in the "Angle Coeffs" section, e.g.
-
 
 .. parsed-literal::
 
@@ -61,8 +61,7 @@ specifying additional BondBond (and BondAngle) coefficients either via
 the input script or in the data file.  I.e. *class2* must be added to
 each line after the angle type.  For lines in the BondBond (or
 BondAngle) section of the data file for angle types that are not
-*class2*\ , you must use an angle style of *skip* as a placeholder, e.g.
-
+*class2*, you must use an angle style of *skip* as a placeholder, e.g.
 
 .. parsed-literal::
 
@@ -81,25 +80,30 @@ in place of an angle style, either in a input script :doc:`angle_coeff <angle_co
 command or in the data file, if you desire to turn off interactions
 for specific angle types.
 
+----------
+
+.. include:: accel_styles.rst
 
 ----------
 
-
 Restrictions
 """"""""""""
-
 
 This angle style can only be used if LAMMPS was built with the
 MOLECULE package.  See the :doc:`Build package <Build_package>` doc page
 for more info.
 
 Unlike other angle styles, the hybrid angle style does not store angle
-coefficient info for individual sub-styles in a :doc:`binary restart files <restart>`.  Thus when restarting a simulation from a restart
-file, you need to re-specify :doc:`angle_coeff <angle_coeff>` commands.
+coefficient info for individual sub-styles in :doc:`binary restart files
+<restart>` or :doc:`data files <write_data>`.  Thus when restarting a
+simulation, you need to re-specify the angle_coeff commands.
 
 Related commands
 """"""""""""""""
 
 :doc:`angle_coeff <angle_coeff>`
 
-**Default:** none
+Default
+"""""""
+
+none

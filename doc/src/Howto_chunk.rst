@@ -1,7 +1,7 @@
 Use chunks to calculate system properties
 =========================================
 
-In LAMMS, "chunks" are collections of atoms, as defined by the
+In LAMMPS, "chunks" are collections of atoms, as defined by the
 :doc:`compute chunk/atom <compute_chunk_atom>` command, which assigns
 each atom to a chunk ID (or to no chunk at all).  The number of chunks
 and the assignment of chunk IDs to atoms can be static or change over
@@ -51,7 +51,7 @@ scales the floating point value to spread it across multiple integers.
 Spatial bins can be of various kinds, e.g. 1d bins = slabs, 2d bins =
 pencils, 3d bins = boxes, spherical bins, cylindrical bins.
 
-This compute also calculates the number of chunks *Nchunk*\ , which is
+This compute also calculates the number of chunks *Nchunk*, which is
 used by other commands to tally per-chunk data.  *Nchunk* can be a
 static value or change over time (e.g. the number of clusters).  The
 chunk ID for an individual atom can also be static (e.g. a molecule
@@ -110,7 +110,7 @@ of a center of mass, which requires summing mass\*position over the
 atoms and then dividing by summed mass.
 
 All of these computes produce a global vector or global array as
-output, wih one or more values per chunk.  The output can be used in
+output, with one or more values per chunk.  The output can be used in
 various ways:
 
 * As input to the :doc:`fix ave/time <fix_ave_time>` command, which can
@@ -148,37 +148,33 @@ Example calculations with chunks
 Here are examples using chunk commands to calculate various
 properties:
 
-(1) Average velocity in each of 1000 2d spatial bins:
+1. Average velocity in each of 1000 2d spatial bins:
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute cc1 all chunk/atom bin/2d x 0.0 0.1 y lower 0.01 units reduced
    fix 1 all ave/chunk 100 10 1000 cc1 vx vy file tmp.out
 
-(2) Temperature in each spatial bin, after subtracting a flow
+2. Temperature in each spatial bin, after subtracting a flow
 velocity:
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute cc1 all chunk/atom bin/2d x 0.0 0.1 y lower 0.1 units reduced
    compute vbias all temp/profile 1 0 0 y 10
    fix 1 all ave/chunk 100 10 1000 cc1 temp bias vbias file tmp.out
 
-(3) Center of mass of each molecule:
+3. Center of mass of each molecule:
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute cc1 all chunk/atom molecule
    compute myChunk all com/chunk cc1
-   fix 1 all ave/time 100 1 100 c_myChunk[\*] file tmp.out mode vector
+   fix 1 all ave/time 100 1 100 c_myChunk[*] file tmp.out mode vector
 
-(4) Total force on each molecule and ave/max across all molecules:
+4. Total force on each molecule and ave/max across all molecules:
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute cc1 all chunk/atom molecule
    fix 1 all ave/chunk 1000 1 1000 cc1 fx fy fz file tmp.out
@@ -187,25 +183,25 @@ velocity:
    thermo 1000
    thermo_style custom step temp v_xave v_xmax
 
-(5) Histogram of cluster sizes:
+5. Histogram of cluster sizes:
 
-
-.. parsed-literal::
+.. code-block:: LAMMPS
 
    compute cluster all cluster/atom 1.0
    compute cc1 all chunk/atom c_cluster compress yes
    compute size all property/chunk cc1 count
    fix 1 all ave/histo 100 1 100 0 20 20 c_size mode vector ave running beyond ignore file tmp.histo
 
-(6) An example for using a per-chunk value to apply per-atom forces to
+6. An example for using a per-chunk value to apply per-atom forces to
 compress individual polymer chains (molecules) in a mixture, is
 explained on the :doc:`compute chunk/spread/atom <compute_chunk_spread_atom>` command doc page.
 
-(7) An example for using one set of per-chunk values for molecule
-chunks, to create a 2nd set of micelle-scale chunks (clustered
-molecules, due to hydrophobicity), is explained on the :doc:`compute chunk/reduce <compute_reduce_chunk>` command doc page.
+7. An example for using one set of per-chunk values for molecule
+chunks, to create a second set of micelle-scale chunks (clustered
+molecules, due to hydrophobicity), is explained on the
+:doc:`compute reduce/chunk <compute_reduce_chunk>` command doc page.
 
-(8) An example for using one set of per-chunk values (dipole moment
+8. An example for using one set of per-chunk values (dipole moment
 vectors) for molecule chunks, spreading the values to each atom in
 each chunk, then defining a second set of chunks as spatial bins, and
 using the :doc:`fix ave/chunk <fix_ave_chunk>` command to calculate an

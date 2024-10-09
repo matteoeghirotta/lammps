@@ -1,7 +1,8 @@
+// clang-format off
 /* ----------------------------------------------------------------------
    LAMMPS - Large-scale Atomic/Molecular Massively Parallel Simulator
-   http://lammps.sandia.gov, Sandia National Laboratories
-   Steve Plimpton, sjplimp@sandia.gov
+   https://www.lammps.org/, Sandia National Laboratories
+   LAMMPS development team: developers@lammps.org
 
    Copyright (2003) Sandia Corporation.  Under the terms of Contract
    DE-AC04-94AL85000 with Sandia Corporation, the U.S. Government retains
@@ -16,22 +17,23 @@
 ------------------------------------------------------------------------- */
 
 #include "procmap.h"
-#include <mpi.h>
+
+#include "comm.h"
+#include "domain.h"
+#include "error.h"
+#include "math_extra.h"
+#include "memory.h"
+#include "tokenizer.h"
+#include "universe.h"
+
 #include <cmath>
 #include <cstring>
 #include <map>
-#include <string>
 #include <utility>
-#include "universe.h"
-#include "comm.h"
-#include "domain.h"
-#include "math_extra.h"
-#include "memory.h"
-#include "error.h"
 
 using namespace LAMMPS_NS;
 
-#define MAXLINE 128
+static constexpr int MAXLINE = 128;
 
 /* ---------------------------------------------------------------------- */
 
@@ -49,7 +51,7 @@ void ProcMap::onelevel_grid(int nprocs, int *user_procgrid, int *procgrid,
 
   // factors = list of all possible 3 factors of processor count
 
-  int npossible = factor(nprocs,NULL);
+  int npossible = factor(nprocs,nullptr);
   memory->create(factors,npossible,3,"procmap:factors");
   npossible = factor(nprocs,factors);
 
@@ -93,7 +95,7 @@ void ProcMap::twolevel_grid(int nprocs, int *user_procgrid, int *procgrid,
   // nfactors = list of all possible 3 factors of node count
   // constrain by 2d
 
-  int nnpossible = factor(nprocs/ncores,NULL);
+  int nnpossible = factor(nprocs/ncores,nullptr);
   memory->create(nfactors,nnpossible,3,"procmap:nfactors");
   nnpossible = factor(nprocs/ncores,nfactors);
 
@@ -102,7 +104,7 @@ void ProcMap::twolevel_grid(int nprocs, int *user_procgrid, int *procgrid,
   // cfactors = list of all possible 3 factors of core count
   // constrain by 2d
 
-  int ncpossible = factor(ncores,NULL);
+  int ncpossible = factor(ncores,nullptr);
   memory->create(cfactors,ncpossible,3,"procmap:cfactors");
   ncpossible = factor(ncores,cfactors);
 
@@ -148,20 +150,16 @@ void ProcMap::twolevel_grid(int nprocs, int *user_procgrid, int *procgrid,
    auto-detects NUMA sockets within a multi-core node
 ------------------------------------------------------------------------- */
 
-void ProcMap::numa_grid(int nprocs, int *user_procgrid, int *procgrid,
-                        int *numagrid)
+void ProcMap::numa_grid(int numa_nodes, int nprocs, int *user_procgrid,
+                        int *procgrid, int *numagrid)
 {
-  // hardwire this for now
-
-  int numa_nodes = 1;
-
   // get names of all nodes
 
   int name_length;
   char node_name[MPI_MAX_PROCESSOR_NAME];
   MPI_Get_processor_name(node_name,&name_length);
   node_name[name_length] = '\0';
-  char *node_names = new char[MPI_MAX_PROCESSOR_NAME*nprocs];
+  auto node_names = new char[MPI_MAX_PROCESSOR_NAME*nprocs];
   MPI_Allgather(node_name,MPI_MAX_PROCESSOR_NAME,MPI_CHAR,node_names,
                 MPI_MAX_PROCESSOR_NAME,MPI_CHAR,world);
   std::string node_string = std::string(node_name);
@@ -179,6 +177,7 @@ void ProcMap::numa_grid(int nprocs, int *user_procgrid, int *procgrid,
   }
   procs_per_node = name_map.begin()->second;
   procs_per_numa = procs_per_node / numa_nodes;
+  if (procs_per_numa < 1) procs_per_numa = 1;
 
   delete [] node_names;
 
@@ -189,6 +188,24 @@ void ProcMap::numa_grid(int nprocs, int *user_procgrid, int *procgrid,
       user_procgrid[1] > 1 ||
       user_procgrid[2] > 1)
     error->all(FLERR,"Could not create numa grid of processors");
+
+  // factorization for the grid of NUMA nodes
+
+  int node_count = nprocs / procs_per_numa;
+
+  int **nodefactors;
+  int nodepossible = factor(node_count,nullptr);
+  memory->create(nodefactors,nodepossible,3,"procmap:nodefactors");
+  nodepossible = factor(node_count,nodefactors);
+
+  if (domain->dimension == 2)
+    nodepossible = cull_2d(nodepossible,nodefactors,3);
+  nodepossible = cull_user(nodepossible,nodefactors,3,user_procgrid);
+
+  if (nodepossible == 0)
+    error->all(FLERR,"Could not create numa grid of processors");
+
+  best_factors(nodepossible,nodefactors,nodegrid,1,1,1);
 
   // user settings for the factorization per numa node
   // currently not user settable
@@ -202,10 +219,11 @@ void ProcMap::numa_grid(int nprocs, int *user_procgrid, int *procgrid,
   if (user_procgrid[1] == 1) user_numagrid[1] = 1;
   if (user_procgrid[2] == 1) user_numagrid[2] = 1;
 
+  // perform NUMA node factorization using subdomain sizes
   // initial factorization within NUMA node
 
   int **numafactors;
-  int numapossible = factor(procs_per_numa,NULL);
+  int numapossible = factor(procs_per_numa,nullptr);
   memory->create(numafactors,numapossible,3,"procmap:numafactors");
   numapossible = factor(procs_per_numa,numafactors);
 
@@ -215,38 +233,6 @@ void ProcMap::numa_grid(int nprocs, int *user_procgrid, int *procgrid,
 
   if (numapossible == 0)
     error->all(FLERR,"Could not create numa grid of processors");
-
-  best_factors(numapossible,numafactors,numagrid,1,1,1);
-
-  // user_nodegrid = implied user constraints on nodes
-
-  int user_nodegrid[3];
-  user_nodegrid[0] = user_procgrid[0] / numagrid[0];
-  user_nodegrid[1] = user_procgrid[1] / numagrid[1];
-  user_nodegrid[2] = user_procgrid[2] / numagrid[2];
-
-  // factorization for the grid of NUMA nodes
-
-  int node_count = nprocs / procs_per_numa;
-
-  int **nodefactors;
-  int nodepossible = factor(node_count,NULL);
-  memory->create(nodefactors,nodepossible,3,"procmap:nodefactors");
-  nodepossible = factor(node_count,nodefactors);
-
-  if (domain->dimension == 2)
-    nodepossible = cull_2d(nodepossible,nodefactors,3);
-  nodepossible = cull_user(nodepossible,nodefactors,3,user_nodegrid);
-
-  if (nodepossible == 0)
-    error->all(FLERR,"Could not create numa grid of processors");
-
-  best_factors(nodepossible,nodefactors,nodegrid,
-               numagrid[0],numagrid[1],numagrid[2]);
-
-  // repeat NUMA node factorization using subdomain sizes
-  // refines the factorization if the user specified the node layout
-  // NOTE: this will not re-enforce user-procgrid constraint will it?
 
   best_factors(numapossible,numafactors,numagrid,
                nodegrid[0],nodegrid[1],nodegrid[2]);
@@ -268,6 +254,7 @@ void ProcMap::numa_grid(int nprocs, int *user_procgrid, int *procgrid,
   procgrid[0] = nodegrid[0] * numagrid[0];
   procgrid[1] = nodegrid[1] * numagrid[1];
   procgrid[2] = nodegrid[2] * numagrid[2];
+
 }
 
 /* ----------------------------------------------------------------------
@@ -280,19 +267,19 @@ void ProcMap::custom_grid(char *cfile, int nprocs,
   int me;
   MPI_Comm_rank(world,&me);
 
-  char line[MAXLINE];
-  FILE *fp = NULL;
+  char line[MAXLINE] = {'\0'};
+  FILE *fp = nullptr;
 
   if (me == 0) {
     fp = fopen(cfile,"r");
-    if (fp == NULL) error->one(FLERR,"Cannot open custom file");
+    if (fp == nullptr) error->one(FLERR,"Cannot open custom file");
 
     // skip header = blank and comment lines
 
     char *ptr;
     if (!fgets(line,MAXLINE,fp))
       error->one(FLERR,"Unexpected end of custom file");
-    while (1) {
+    while (true) {
       if ((ptr = strchr(line,'#'))) *ptr = '\0';
       if (strspn(line," \t\n\r") != strlen(line)) break;
       if (!fgets(line,MAXLINE,fp))
@@ -300,12 +287,16 @@ void ProcMap::custom_grid(char *cfile, int nprocs,
     }
   }
 
-  int n = strlen(line) + 1;
-  MPI_Bcast(&n,1,MPI_INT,0,world);
-  MPI_Bcast(line,n,MPI_CHAR,0,world);
-
-  int rv = sscanf(line,"%d %d %d",&procgrid[0],&procgrid[1],&procgrid[2]);
-  if (rv != 3) error->all(FLERR,"Processors custom grid file is inconsistent");
+  MPI_Bcast(line,MAXLINE,MPI_CHAR,0,world);
+  try {
+    ValueTokenizer procs(line);
+    procgrid[0] = procs.next_int();
+    procgrid[1] = procs.next_int();
+    procgrid[2] = procs.next_int();
+  } catch (TokenizerException &e) {
+    error->all(FLERR,"Processors custom grid file "
+                                 "is inconsistent: {}", e.what());
+  }
 
   int flag = 0;
   if (procgrid[0]*procgrid[1]*procgrid[2] != nprocs) flag = 1;
@@ -324,10 +315,17 @@ void ProcMap::custom_grid(char *cfile, int nprocs,
     for (int i = 0; i < nprocs; i++) {
       if (!fgets(line,MAXLINE,fp))
         error->one(FLERR,"Unexpected end of custom file");
-      rv = sscanf(line,"%d %d %d %d",
-                  &cmap[i][0],&cmap[i][1],&cmap[i][2],&cmap[i][3]);
-      if (rv != 4)
-        error->one(FLERR,"Processors custom grid file is inconsistent");
+
+      try {
+        ValueTokenizer pmap(line);
+        cmap[i][0] = pmap.next_int();
+        cmap[i][1] = pmap.next_int();
+        cmap[i][2] = pmap.next_int();
+        cmap[i][3] = pmap.next_int();
+      } catch (TokenizerException &e) {
+        error->one(FLERR,"Processors custom grid file is "
+                                     "inconsistent: {}", e.what());
+      }
     }
     fclose(fp);
   }
@@ -662,7 +660,7 @@ void ProcMap::output(char *file, int *procgrid, int ***grid2proc)
   FILE *fp;
   if (me == 0) {
     fp = fopen(file,"w");
-    if (fp == NULL) error->one(FLERR,"Cannot open processors output file");
+    if (fp == nullptr) error->one(FLERR,"Cannot open processors output file");
     fprintf(fp,"LAMMPS mapping of processors to 3d grid\n");
     fprintf(fp,"partition = %d\n",universe->iworld+1);
     fprintf(fp,"Px Py Pz = %d %d %d\n",procgrid[0],procgrid[1],procgrid[2]);
@@ -722,7 +720,7 @@ void ProcMap::output(char *file, int *procgrid, int ***grid2proc)
 
 /* ----------------------------------------------------------------------
    generate all possible 3-integer factorizations of N
-   store them in factors if non-NULL
+   store them in factors if non-nullptr
    return # of factorizations
 ------------------------------------------------------------------------- */
 
