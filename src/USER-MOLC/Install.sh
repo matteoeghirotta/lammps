@@ -26,42 +26,42 @@ action () {
   fi
 }
 
-# USER-MOLC uses a number of other packages, so we must 
-# require them to be installed.
+# the KSPACE, MOLECULE and ASPHERE packages must be installed.
 
 if (test $1 = 1) then
-  if (test ! -e ../gridcomm.h) then
+  if (test ! -e ../pppm.h) then
     echo "Must install KSPACE package with USER-MOLC"
     exit 1
   fi
-fi
-if (test $1 = 1) then
-  if (test ! -e ../pair_gayberne.cpp) then
+  if (test ! -e ../fix_nve_asphere.cpp) then
     echo "Must install ASPHERE package with USER-MOLC"
     exit 1
   fi
-fi
-
-if (test $1 = 1) then
   if (test ! -e ../molecule.h) then
     echo "Must install MOLECULE package with USER-MOLC"
     exit 1
   fi
 fi
 
-# list of files with dependcies
 
+# list of files with dependcies
 action bond_ellipsoid.h atom_vec_ellipsoid.h
 action bond_ellipsoid.h molecule.h
 action bond_ellipsoid.cpp atom_vec_ellipsoid.h
 action bond_ellipsoid.cpp molecule.h
-action pppm_offcentre.h atom_vec_ellipsoid.h
-action pppm_offcentre.cpp gridcomm.h
-action pair_coul_long_offcentre.h
-action pair_coul_long_offcentre.cpp atom_vec_ellipsoid.h
-action pair_coul_cut_offcentre.h
-action pair_coul_cut_offcentre.cpp atom_vec_ellipsoid.h
-action fix_temp_berendsen_asphere.h
-action fix_temp_berendsen_asphere.cpp atom_vec_ellipsoid.h
 action bond_molc.h
 action bond_molc.cpp
+action compute_erotate_asphere_atom.h
+action compute_erotate_asphere_atom.cpp
+action compute_inter.h 
+action compute_inter.cpp
+action compute_inter_molc.h
+action compute_inter_molc.cpp
+action fix_temp_berendsen_asphere.h
+action fix_temp_berendsen_asphere.cpp
+action pair_molc_cut.h
+action pair_molc_cut.cpp
+action pair_molc_long.h
+action pair_molc_long.cpp
+action pppm_molc.h pppm.h
+action pppm_molc.cpp pppm.h

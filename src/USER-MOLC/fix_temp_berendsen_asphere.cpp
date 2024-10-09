@@ -15,39 +15,38 @@
    Contributing author: Matteo Ricci
    -------------------------------------------------------------------------*/
 
-#include "string.h"
-#include "stdlib.h"
-#include "math.h"
 #include "fix_temp_berendsen_asphere.h"
 #include "atom.h"
 #include "atom_vec.h"
-#include "force.h"
 #include "comm.h"
-#include "input.h"
-#include "variable.h"
-#include "group.h"
-#include "update.h"
-#include "modify.h"
 #include "compute.h"
 #include "error.h"
+#include "force.h"
+#include "group.h"
+#include "input.h"
+#include "math.h"
+#include "modify.h"
+#include "stdlib.h"
+#include "string.h"
+#include "update.h"
+#include "variable.h"
 
 using namespace LAMMPS_NS;
 using namespace FixConst;
 
-enum{NOBIAS,BIAS};
-enum{CONSTANT,EQUAL};
+enum { NOBIAS, BIAS };
+enum { CONSTANT, EQUAL };
 
 /* ---------------------------------------------------------------------- */
 
-FixTempBerendsenAsphere::FixTempBerendsenAsphere(LAMMPS *lmp,
-                                                 int narg, char **arg) :
-  Fix(lmp, narg, arg)
+FixTempBerendsenAsphere::FixTempBerendsenAsphere(LAMMPS *lmp, int narg, char **arg) :
+    Fix(lmp, narg, arg)
 {
-  if (narg < 6)
-    error->all(FLERR, "Illegal fix temp/berendsen/asphere command");
+  if (narg < 6) error->all(FLERR, "Illegal fix temp/berendsen/asphere command");
 
   if (!atom->ellipsoid_flag || !atom->angmom_flag || !atom->torque_flag)
-    error->all(FLERR, "Fix berendsen/asphere requires atom attributes "
+    error->all(FLERR,
+               "Fix berendsen/asphere requires atom attributes "
                "quat, angmom, torque, shape");
 
   coupling_factor = 1.0;
@@ -67,38 +66,41 @@ FixTempBerendsenAsphere::FixTempBerendsenAsphere(LAMMPS *lmp,
 
   int iarg = 3;
   while (iarg < narg) {
-    if (strcmp(arg[iarg],"temp") == 0) {
-      if (iarg+4 > narg) error->all(FLERR,"Illegal fix berendsen/asphere "
-                                    "command");
+    if (strcmp(arg[iarg], "temp") == 0) {
+      if (iarg + 4 > narg)
+        error->all(FLERR,
+                   "Illegal fix berendsen/asphere "
+                   "command");
 
       tstr = NULL;
-      if (strstr(arg[3],"v_") == arg[3]) {
-	tstyle = EQUAL;
+      if (strstr(arg[3], "v_") == arg[3]) {
+        tstyle = EQUAL;
       } else {
-	tstyle = CONSTANT;
+        tstyle = CONSTANT;
       }
 
-      t_start = force->numeric(FLERR,arg[iarg+1]);
+      t_start = utils::numeric(FLERR, arg[iarg + 1], false, lmp);
       t_target = t_start;
-      t_stop = force->numeric(FLERR,arg[iarg+2]);
-      t_period = force->numeric(FLERR,arg[iarg+3]);
+      t_stop = utils::numeric(FLERR, arg[iarg + 2], false, lmp);
+      t_period = utils::numeric(FLERR, arg[iarg + 3], false, lmp);
       if (t_start <= 0.0 || t_stop <= 0.0)
-        error->all(FLERR, "Target temperature for fix berendsen/asphere "
+        error->all(FLERR,
+                   "Target temperature for fix berendsen/asphere "
                    "cannot be 0.0");
       iarg += 4;
-    } else if (strcmp(arg[iarg],"debug") == 0) {
+    } else if (strcmp(arg[iarg], "debug") == 0) {
       debug = true;
       iarg++;
-    } else if (strcmp(arg[iarg],"couple") == 0) {
-      coupling_factor = force->numeric(FLERR,arg[iarg+1]);
+    } else if (strcmp(arg[iarg], "couple") == 0) {
+      coupling_factor = utils::numeric(FLERR, arg[iarg + 1], false, lmp);
       iarg += 2;
-    } else error->all(FLERR,"Illegal fix berendsen/asphere command");
+    } else
+      error->all(FLERR, "Illegal fix berendsen/asphere command");
   }
 
   // error checks
 
-  if (t_period <= 0.0)
-    error->all(FLERR, "Fix temp/berendsen/asphere period must be > 0.0");
+  if (t_period <= 0.0) error->all(FLERR, "Fix temp/berendsen/asphere period must be > 0.0");
 
   // create a new compute temp style
   // id = fix-ID + temp, compute group = fix group
@@ -106,10 +108,10 @@ FixTempBerendsenAsphere::FixTempBerendsenAsphere(LAMMPS *lmp,
   // rotational
   int n = strlen(id) + 17;
   id_temp_rot = new char[n];
-  strcpy(id_temp_rot,id);
-  strcat(id_temp_rot,"_temp_rotational");
+  strcpy(id_temp_rot, id);
+  strcat(id_temp_rot, "_temp_rotational");
 
-  char **newarg = new char*[5];//3
+  char **newarg = new char *[5];    //3
   newarg[0] = id_temp_rot;
   newarg[1] = group->names[igroup];
   newarg[2] = (char *) "temp/asphere";
@@ -118,23 +120,23 @@ FixTempBerendsenAsphere::FixTempBerendsenAsphere(LAMMPS *lmp,
 
   modify->add_compute(5, newarg);
 
-  delete [] newarg;
+  delete[] newarg;
 
   // translational
   n = strlen(id) + 19;
   id_temp_transl = new char[n];
-  strcpy(id_temp_transl,id);
-  strcat(id_temp_transl,"_temp_traslational");
+  strcpy(id_temp_transl, id);
+  strcat(id_temp_transl, "_temp_traslational");
 
-  newarg = new char*[3];
+  newarg = new char *[3];
   newarg[0] = id_temp_transl;
   newarg[1] = group->names[igroup];
   newarg[2] = (char *) "temp";
-  modify->add_compute(3,newarg);
+  modify->add_compute(3, newarg);
 
-  printf("[FixTempBerendsenAsphere] tstyle %d\n",tstyle);
+  printf("[FixTempBerendsenAsphere] tstyle %d\n", tstyle);
 
-  delete [] newarg;
+  delete[] newarg;
 
   tflag = 1;
 
@@ -147,31 +149,28 @@ FixTempBerendsenAsphere::FixTempBerendsenAsphere(LAMMPS *lmp,
   stored_data[4] = 0.0;
   stored_data[5] = 0.0;
 
-  if (debug)
-    {
-      printf("FixTempBerendsenAsphere "
-             "t_target %f t_start %f t_stop %f t_damp %f t_coupling %f\n",
-             t_target, t_start, t_stop, t_period, coupling_factor);
-      fflush(stdout);
-    }
-
+  if (debug) {
+    printf("FixTempBerendsenAsphere "
+           "t_target %f t_start %f t_stop %f t_damp %f t_coupling %f\n",
+           t_target, t_start, t_stop, t_period, coupling_factor);
+    fflush(stdout);
+  }
 }
 
 /* ---------------------------------------------------------------------- */
 
 FixTempBerendsenAsphere::~FixTempBerendsenAsphere()
 {
-  delete [] tstr;
+  delete[] tstr;
 
   // delete temperature if fix created it
-  if (tflag)
-    {
-      modify->delete_compute(id_temp_transl);
-      modify->delete_compute(id_temp_rot);
-    }
+  if (tflag) {
+    modify->delete_compute(id_temp_transl);
+    modify->delete_compute(id_temp_rot);
+  }
 
-  delete [] id_temp_transl;
-  delete [] id_temp_rot;
+  delete[] id_temp_transl;
+  delete[] id_temp_rot;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -180,7 +179,6 @@ int FixTempBerendsenAsphere::setmask()
 {
   int mask = 0;
   mask |= END_OF_STEP;
-  mask |= THERMO_ENERGY;
   return mask;
 }
 
@@ -192,79 +190,78 @@ void FixTempBerendsenAsphere::init()
 
   if (tstr) {
     tvar = input->variable->find(tstr);
-    if (tvar < 0)
-      error->all(FLERR,
-                 "Variable name for fix temp/berendsen/asphere does not exist");
-    if (input->variable->equalstyle(tvar)) tstyle = EQUAL;
-    else error->all(FLERR,
-                    "Variable for fix temp/berendsen/asphere is invalid style");
+    if (tvar < 0) error->all(FLERR, "Variable name for fix temp/berendsen/asphere does not exist");
+    if (input->variable->equalstyle(tvar))
+      tstyle = EQUAL;
+    else
+      error->all(FLERR, "Variable for fix temp/berendsen/asphere is invalid style");
   }
 
   int icompute_transl = modify->find_compute(id_temp_transl);
   if (icompute_transl < 0)
-    error->all(FLERR,
-               "Temp ID for fix temp/berendsen/asphere does not exist");
+    error->all(FLERR, "Temp ID for fix temp/berendsen/asphere does not exist");
   temperature_transl = modify->compute[icompute_transl];
 
   int icompute_rot = modify->find_compute(id_temp_rot);
   if (icompute_rot < 0)
-    error->all(FLERR, "Temp/rotational ID for fix temp/berendsen/asphere "
+    error->all(FLERR,
+               "Temp/rotational ID for fix temp/berendsen/asphere "
                "does not exist");
 
   temperature_rot = modify->compute[icompute_rot];
 
-  if (temperature_transl->tempbias || temperature_rot->tempbias) which = BIAS;
-  else which = NOBIAS;
+  if (temperature_transl->tempbias || temperature_rot->tempbias)
+    which = BIAS;
+  else
+    which = NOBIAS;
 }
 
 /* ---------------------------------------------------------------------- */
 
 void FixTempBerendsenAsphere::end_of_step()
 {
-  if (debug)
-    {
-      printf("FixTempBerendsenAsphere::end_of_step\n");
-      fflush(stdout);
-    }
+  if (debug) {
+    printf("FixTempBerendsenAsphere::end_of_step\n");
+    fflush(stdout);
+  }
 
   double delta = update->ntimestep - update->beginstep;
   delta /= update->endstep - update->beginstep;
-  t_target = t_start + delta * (t_stop-t_start);
+  t_target = t_start + delta * (t_stop - t_start);
 
   double t_current_transl = temperature_transl->compute_scalar();
   if (t_current_transl == 0.0) {
-    t_current_transl = t_target*0.000001;
-    error->warning(FLERR, "Computed translational temperature "
-		   "for fix temp/berendsen/asphere was 0.0");
+    t_current_transl = t_target * 0.000001;
+    error->warning(FLERR,
+                   "Computed translational temperature "
+                   "for fix temp/berendsen/asphere was 0.0");
   }
 
   double t_current_rot = temperature_rot->compute_scalar();
   if (t_current_rot == 0.0) {
-    t_current_rot = t_target*0.000001;
-    error->warning(FLERR, "Computed rotational temperature "
-		   "for fix temp/berendsen/asphere was 0.0");
+    t_current_rot = t_target * 0.000001;
+    error->warning(FLERR,
+                   "Computed rotational temperature "
+                   "for fix temp/berendsen/asphere was 0.0");
   }
 
   // set current t_target
   // if variable temp, evaluate variable, wrap with clear/add
   if (tstyle == CONSTANT)
-    t_target = t_start + delta * (t_stop-t_start);
+    t_target = t_start + delta * (t_stop - t_start);
   else {
     modify->clearstep_compute();
     t_target = input->variable->compute_equal(tvar);
     if (t_target < 0.0)
-      error->one(FLERR,
-                 "Fix temp/berendsen variable returned negative temperature");
+      error->one(FLERR, "Fix temp/berendsen variable returned negative temperature");
     modify->addstep_compute(update->ntimestep + nevery);
   }
 
   // rescale velocities by lamda
-  double lamdaTransl = sqrt(1.0 +
-                            coupling_factor*update->dt/t_period*
-                            (t_target/t_current_transl - 1.0));
-  double lamdaRot    = sqrt(1.0 +
-                            coupling_factor*update->dt/t_period*
-                            (t_target/t_current_rot - 1.0));
+  double lamdaTransl =
+      sqrt(1.0 + coupling_factor * update->dt / t_period * (t_target / t_current_transl - 1.0));
+  double lamdaRot =
+      sqrt(1.0 + coupling_factor * update->dt / t_period * (t_target / t_current_rot - 1.0));
   double efactor_rot = 0.5 * force->boltz * temperature_rot->dof;
   double efactor_transl = 0.5 * force->boltz * temperature_transl->dof;
 
@@ -275,15 +272,14 @@ void FixTempBerendsenAsphere::end_of_step()
   stored_data[4] = t_current_transl;
   stored_data[5] = t_current_rot;
 
-  energy += t_current_rot * (1.0-lamdaRot*lamdaRot) * efactor_rot +
-    t_current_transl * (1.0-lamdaTransl*lamdaTransl) * efactor_transl;
+  energy += t_current_rot * (1.0 - lamdaRot * lamdaRot) * efactor_rot +
+      t_current_transl * (1.0 - lamdaTransl * lamdaTransl) * efactor_transl;
 
-  if (debug && (update->ntimestep%1 == 0) )
-    {
-      printf("[FixTempBerendsenAsphere] t: %g (* %g) r: %g (* %g) target:%g\n",
-             t_current_transl, lamdaTransl, t_current_rot, lamdaRot, t_target);
-      fflush(stdout);
-    }
+  if (debug && (update->ntimestep % 1 == 0)) {
+    printf("[FixTempBerendsenAsphere] t: %g (* %g) r: %g (* %g) target:%g\n", t_current_transl,
+           lamdaTransl, t_current_rot, lamdaRot, t_target);
+    fflush(stdout);
+  }
 
   double **v = atom->v;
   double **angmom = atom->angmom;
@@ -307,11 +303,9 @@ void FixTempBerendsenAsphere::end_of_step()
     for (int i = 0; i < nlocal; i++) {
       if (mask[i] & groupbit) {
 
-        if (temperature_transl->tempbias)
-          temperature_transl->remove_bias(i,v[i]);
+        if (temperature_transl->tempbias) temperature_transl->remove_bias(i, v[i]);
 
-        if (temperature_rot->tempbias)
-          temperature_rot->remove_bias(i,v[i]);
+        if (temperature_rot->tempbias) temperature_rot->remove_bias(i, v[i]);
 
         //should discriminate trans & rot
         v[i][0] *= lamdaTransl;
@@ -322,11 +316,9 @@ void FixTempBerendsenAsphere::end_of_step()
         angmom[i][1] *= lamdaRot;
         angmom[i][2] *= lamdaRot;
 
-        if (temperature_transl->tempbias)
-          temperature_transl->restore_bias(i,v[i]);
+        if (temperature_transl->tempbias) temperature_transl->restore_bias(i, v[i]);
 
-        if (temperature_rot->tempbias)
-          temperature_rot->restore_bias(i,v[i]);
+        if (temperature_rot->tempbias) temperature_rot->restore_bias(i, v[i]);
       }
     }
   }
@@ -337,9 +329,8 @@ void FixTempBerendsenAsphere::end_of_step()
 int FixTempBerendsenAsphere::modify_param(int narg, char **arg)
 {
   int const nargs_allowed = 3;
-  if (strcmp(arg[0],"temp") == 0) { // temp mod only is allowed
-    if (narg < nargs_allowed) error->all(FLERR,
-                                         "Illegal fix_modify command");
+  if (strcmp(arg[0], "temp") == 0) {    // temp mod only is allowed
+    if (narg < nargs_allowed) error->all(FLERR, "Illegal fix_modify command");
     if (tflag) {
       modify->delete_compute(id_temp_transl);
       modify->delete_compute(id_temp_rot);
@@ -347,16 +338,15 @@ int FixTempBerendsenAsphere::modify_param(int narg, char **arg)
     }
 
     // parse trasl temp compute id
-    delete [] id_temp_transl;
+    delete[] id_temp_transl;
     int n = strlen(arg[1]) + 1;
     id_temp_transl = new char[n];
-    strcpy(id_temp_transl,arg[1]);
+    strcpy(id_temp_transl, arg[1]);
 
     printf("modifying fix with temp trasl id %s\n", id_temp_transl);
 
     int icompute_transl = modify->find_compute(id_temp_transl);
-    if (icompute_transl < 0) error->all(FLERR,
-                                        "Could not find fix_modify temp ID");
+    if (icompute_transl < 0) error->all(FLERR, "Could not find fix_modify temp ID");
     temperature_transl = modify->compute[icompute_transl];
 
     if (temperature_transl->tempflag == 0)
@@ -365,16 +355,15 @@ int FixTempBerendsenAsphere::modify_param(int narg, char **arg)
       error->warning(FLERR, "Group for fix_modify temp != fix group");
 
     // parse rot temp compute id
-    delete [] id_temp_rot;
+    delete[] id_temp_rot;
     n = strlen(arg[2]) + 1;
     id_temp_rot = new char[n];
-    strcpy(id_temp_rot,arg[2]);
+    strcpy(id_temp_rot, arg[2]);
 
     printf("modifying fix with temp rot id %s\n", id_temp_rot);
 
     int icompute_rot = modify->find_compute(id_temp_rot);
-    if (icompute_rot < 0)
-      error->all(FLERR, "Could not find fix_modify temp ID");
+    if (icompute_rot < 0) error->all(FLERR, "Could not find fix_modify temp ID");
     temperature_rot = modify->compute[icompute_rot];
 
     if (temperature_rot->tempflag == 0)
@@ -408,10 +397,8 @@ double FixTempBerendsenAsphere::compute_scalar()
 
 void *FixTempBerendsenAsphere::extract(const char *str, int &dim)
 {
-  dim=0;
-  if (strcmp(str,"t_target") == 0) {
-    return &t_target;
-  }
+  dim = 0;
+  if (strcmp(str, "t_target") == 0) { return &t_target; }
   return NULL;
 }
 

@@ -15,9 +15,11 @@ It also provides classes to take into account short and long range electrostatic
 interactions of collections of point charges distributed in the interior of the
 ellipsoidal beads.
 
-Both additions to lammps, together with the already implemented pair_style
-gayberne for van der waals interactions, make it possible to simulate the
-dynamics of coarse grained particles modeling very accurately full atom systems.
+It requires packages KPACE, MOLECULE, and ASPHERE to be installed.
+
 
 This package was developed by Matteo Ricci, he can be contacted at the email
 address: matteoeghirotta@gmail.com.
+
+It was updated by Stephen Farr: stephen.farr at ed.ac.uk
+
