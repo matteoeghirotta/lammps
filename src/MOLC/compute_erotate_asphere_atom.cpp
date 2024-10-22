@@ -28,8 +28,6 @@
 
 using namespace LAMMPS_NS;
 
-static constexpr double INERTIA = 0.4;    // moment of inertia prefactor for sphere
-
 /* ---------------------------------------------------------------------- */
 
 ComputeERotateAsphereAtom::
@@ -88,7 +86,7 @@ void ComputeERotateAsphereAtom::init()
         error->one(FLERR,"Compute erotate/asphere requires extended particles");
     }
 
-  pfactor = 0.5 * force->mvv2e * INERTIA;;
+  pfactor = 0.5 * force->mvv2e;
 }
 
 /* ---------------------------------------------------------------------- */
