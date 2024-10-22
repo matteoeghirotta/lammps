@@ -27,11 +27,12 @@ namespace LAMMPS_NS {
 class ComputeERotateAsphereAtom : public Compute {
  public:
   ComputeERotateAsphereAtom(class LAMMPS *, int, char **);
-
+  ~ComputeERotateAsphereAtom() override;
   void init() override;
   void compute_peratom() override;
+  double memory_usage() override;
 
- protected:
+ private:
   int nmax;
   double pfactor;
   class AtomVecEllipsoid *avec_ellipsoid;
@@ -40,7 +41,7 @@ class ComputeERotateAsphereAtom : public Compute {
   double *erot;
 };
 
-}   // namespace LAMMPS_NS
+}    // namespace LAMMPS_NS
 
 #endif
 #endif

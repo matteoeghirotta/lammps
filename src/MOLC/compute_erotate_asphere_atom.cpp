@@ -111,6 +111,7 @@ void ComputeERotateAsphereAtom::compute_peratom()
   if (avec_line) lbonus = avec_line->bonus;
   AtomVecTri::Bonus *tbonus;
   if (avec_tri) tbonus = avec_tri->bonus;
+
   int *ellipsoid = atom->ellipsoid;
   int *line = atom->line;
   int *tri = atom->tri;
@@ -131,7 +132,7 @@ void ComputeERotateAsphereAtom::compute_peratom()
 
   for (int i = 0; i < nlocal; i++)
     if (mask[i] & groupbit) {
-      if (ellipsoid && ellipsoid[i] >= 0) {
+      if (ellipsoid && ebonus && (ellipsoid[i] >= 0)) {
         shape = ebonus[ellipsoid[i]].shape;
         quat = ebonus[ellipsoid[i]].quat;
 
@@ -187,7 +188,7 @@ void ComputeERotateAsphereAtom::compute_peratom()
    memory usage of local atom-based array
 ------------------------------------------------------------------------- */
 
-double ComputeErotateAsphereAtom::memory_usage()
+double ComputeERotateAsphereAtom::memory_usage()
 {
   double bytes = (double) nmax * sizeof(double);
   return bytes;
