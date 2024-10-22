@@ -40,6 +40,12 @@ ComputeERotateAsphereAtom(LAMMPS *lmp, int narg, char **arg) :
   peratom_flag = 1;
   size_peratom_cols = 0;
   nmax = 0;
+    // error check
+
+  if (!atom->omega_flag)
+    error->all(FLERR, "Compute erotate/asphere/atom requires atom attribute omega");
+  if (!atom->radius_flag)
+    error->all(FLERR, "Compute erotate/asphere/atom requires atom attribute radius");
 }
 
 /* ---------------------------------------------------------------------- */
