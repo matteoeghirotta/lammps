@@ -28,6 +28,8 @@
 
 using namespace LAMMPS_NS;
 
+static constexpr double INERTIA = 0.4;    // moment of inertia prefactor for sphere
+
 /* ---------------------------------------------------------------------- */
 
 ComputeERotateAsphereAtom::
@@ -86,7 +88,7 @@ void ComputeERotateAsphereAtom::init()
         error->one(FLERR,"Compute erotate/asphere requires extended particles");
     }
 
-  pfactor = 0.5 * force->mvv2e;
+  pfactor = 0.5 * force->mvv2e * INERTIA;;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -181,4 +183,14 @@ void ComputeERotateAsphereAtom::compute_peratom()
 	erot[i] *= pfactor;
       }
     }
+}
+
+/* ----------------------------------------------------------------------
+   memory usage of local atom-based array
+------------------------------------------------------------------------- */
+
+double ComputeErotateAsphereAtom::memory_usage()
+{
+  double bytes = (double) nmax * sizeof(double);
+  return bytes;
 }
